@@ -1,0 +1,6 @@
+{
+  "name": "AnimiX — Аниме и Манга Портал",
+  "description": "Портал аниме и манги на русском языке с расписанием релизов, каталогами, франшизами, новостями и списками просмотра.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
