@@ -1,11 +1,100 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import helmet from "helmet";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import {
+  ServerUser,
+  findUserByUsername,
+  findUserByEmail,
+  updateUserProfile,
+  signUpWithSupabase,
+  signInWithSupabase,
+  getUserByAuthToken,
+  signOutWithSupabase,
+} from "./src/db/userService";
+import {
+  getUserWatchlist,
+  saveWatchlistItem,
+  deleteWatchlistItem,
+  syncWatchlist
+} from "./src/db/watchlistService";
+import {
+  getUserRecentlyViewed,
+  addRecentlyViewed,
+  clearRecentlyViewed,
+  syncRecentlyViewed
+} from "./src/db/recentlyViewedService";
+import {
+  getUserReadChapters,
+  saveReadChaptersForMedia,
+  toggleReadChapter,
+  markUpToChapter,
+  syncReadChapters
+} from "./src/db/readChaptersService";
+import {
+  validateRequest,
+  registerSchema,
+  loginSchema,
+  updateProfileSchema,
+  saveWatchlistSchema,
+  deleteWatchlistSchema,
+  addRecentlyViewedSchema,
+  saveReadChaptersSchema,
+  toggleReadChapterSchema,
+  markUpToChapterSchema,
+  userSyncSchema
+} from "./src/middleware/validate";
 
 const app = express();
 const PORT = 3000;
+
+// Security HTTP headers
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// Strict CORS configuration using ALLOWED_ORIGINS whitelist
+const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+const allowedOrigins = allowedOriginsEnv
+  ? allowedOriginsEnv.split(",").map((o) => o.trim()).filter(Boolean)
+  : [];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS policy violation: Origin not allowed"));
+      }
+    },
+    credentials: true,
+  })
+);
+
+// Rate Limiters
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Слишком много попыток входа или регистрации. Попробуйте через 15 минут." },
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Превышен лимит запросов к AI. Попробуйте через минуту." },
+});
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -148,239 +237,6 @@ const MEDIA_FRAGMENT = `
 `;
 
 // User Authentication & Age Verification System
-interface ServerUser {
-  id: string;
-  username: string;
-  email: string;
-  passwordHash: string;
-  dateOfBirth: string; // YYYY-MM-DD
-  createdAt: string;
-  avatarUrl?: string;
-  bio?: string;
-  nicknameEffect?: string;
-  backgroundBanner?: string;
-}
-
-const usersByUsername = new Map<string, ServerUser>();
-const usersByEmail = new Map<string, ServerUser>();
-const sessions = new Map<string, ServerUser>();
-
-// Server-side Watchlist Storage per User (persistent across server restarts)
-const userWatchlists = new Map<string, Record<number, any>>();
-const userRecentlyViewed = new Map<string, any[]>();
-const userReadChapters = new Map<string, Record<number, number[]>>();
-
-// Persistent File Store path
-const DATA_DIR = path.join(process.cwd(), "data");
-const USERS_FILE = path.join(DATA_DIR, "users.json");
-const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
-const WATCHLISTS_FILE = path.join(DATA_DIR, "watchlists.json");
-const RECENTLY_VIEWED_FILE = path.join(DATA_DIR, "recently_viewed.json");
-const READ_CHAPTERS_FILE = path.join(DATA_DIR, "read_chapters.json");
-
-function safeWriteJsonSync(filePath: string, data: any) {
-  try {
-    const tmpPath = `${filePath}.tmp`;
-    const bakPath = `${filePath}.bak`;
-    const jsonString = JSON.stringify(data, null, 2);
-
-    // Write to temporary file first to prevent partial/truncated writes on sudden exit
-    fs.writeFileSync(tmpPath, jsonString, "utf-8");
-
-    // Copy existing file to backup before replacing
-    if (fs.existsSync(filePath)) {
-      try {
-        fs.copyFileSync(filePath, bakPath);
-      } catch {
-        // Non-fatal backup failure
-      }
-    }
-
-    // Atomic replace
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    console.error(`[Storage] Failed atomic write to ${filePath}:`, err);
-  }
-}
-
-function loadDataFromDisk() {
-  if (!fs.existsSync(DATA_DIR)) {
-    try {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    } catch (err) {
-      console.error("[Storage] Failed to create data directory:", err);
-    }
-  }
-
-  // 1. Load Users with isolated try-catch & backup fallback
-  if (fs.existsSync(USERS_FILE)) {
-    try {
-      const raw = fs.readFileSync(USERS_FILE, "utf-8");
-      if (raw && raw.trim()) {
-        const usersArray: ServerUser[] = JSON.parse(raw);
-        if (Array.isArray(usersArray)) {
-          usersArray.forEach((user) => {
-            if (user && user.id && user.username && user.email) {
-              usersByUsername.set(user.username.toLowerCase(), user);
-              usersByEmail.set(user.email.toLowerCase(), user);
-            }
-          });
-        }
-      }
-    } catch (err) {
-      console.error("[Storage] Error loading USERS_FILE, attempting backup fallback:", err);
-      const bakFile = `${USERS_FILE}.bak`;
-      if (fs.existsSync(bakFile)) {
-        try {
-          const rawBak = fs.readFileSync(bakFile, "utf-8");
-          const usersArray: ServerUser[] = JSON.parse(rawBak);
-          if (Array.isArray(usersArray)) {
-            usersArray.forEach((user) => {
-              if (user && user.id && user.username && user.email) {
-                usersByUsername.set(user.username.toLowerCase(), user);
-                usersByEmail.set(user.email.toLowerCase(), user);
-              }
-            });
-            console.log("[Storage] Successfully recovered users from backup file.");
-          }
-        } catch (bakErr) {
-          console.error("[Storage] Error loading USERS_FILE backup:", bakErr);
-        }
-      }
-    }
-  }
-
-  // 2. Load Sessions with isolated try-catch & reference linking
-  if (fs.existsSync(SESSIONS_FILE)) {
-    try {
-      const raw = fs.readFileSync(SESSIONS_FILE, "utf-8");
-      if (raw && raw.trim()) {
-        const sessionsObj: Record<string, ServerUser> = JSON.parse(raw);
-        Object.entries(sessionsObj).forEach(([token, user]) => {
-          if (user && user.username) {
-            // Re-link session user to the canonical object in usersByUsername/usersByEmail if present
-            const canonicalUser = 
-              usersByUsername.get(user.username.toLowerCase()) || 
-              usersByEmail.get(user.email.toLowerCase()) || 
-              user;
-            
-            if (canonicalUser.username && !usersByUsername.has(canonicalUser.username.toLowerCase())) {
-              usersByUsername.set(canonicalUser.username.toLowerCase(), canonicalUser);
-            }
-            if (canonicalUser.email && !usersByEmail.has(canonicalUser.email.toLowerCase())) {
-              usersByEmail.set(canonicalUser.email.toLowerCase(), canonicalUser);
-            }
-
-            sessions.set(token, canonicalUser);
-          }
-        });
-      }
-    } catch (err) {
-      console.error("[Storage] Error loading SESSIONS_FILE:", err);
-    }
-  }
-
-  // 3. Load Watchlists with isolated try-catch
-  if (fs.existsSync(WATCHLISTS_FILE)) {
-    try {
-      const raw = fs.readFileSync(WATCHLISTS_FILE, "utf-8");
-      if (raw && raw.trim()) {
-        const watchlistsObj: Record<string, Record<number, any>> = JSON.parse(raw);
-        Object.entries(watchlistsObj).forEach(([userId, watchlist]) => {
-          if (userId && watchlist) {
-            userWatchlists.set(userId, watchlist);
-          }
-        });
-      }
-    } catch (err) {
-      console.error("[Storage] Error loading WATCHLISTS_FILE:", err);
-    }
-  }
-
-  // 4. Load Recently Viewed with isolated try-catch
-  if (fs.existsSync(RECENTLY_VIEWED_FILE)) {
-    try {
-      const raw = fs.readFileSync(RECENTLY_VIEWED_FILE, "utf-8");
-      if (raw && raw.trim()) {
-        const recentlyViewedObj: Record<string, any[]> = JSON.parse(raw);
-        Object.entries(recentlyViewedObj).forEach(([userId, items]) => {
-          if (userId && Array.isArray(items)) {
-            userRecentlyViewed.set(userId, items);
-          }
-        });
-      }
-    } catch (err) {
-      console.error("[Storage] Error loading RECENTLY_VIEWED_FILE:", err);
-    }
-  }
-
-  // 5. Load Read Chapters with isolated try-catch
-  if (fs.existsSync(READ_CHAPTERS_FILE)) {
-    try {
-      const raw = fs.readFileSync(READ_CHAPTERS_FILE, "utf-8");
-      if (raw && raw.trim()) {
-        const readChaptersObj: Record<string, Record<number, number[]>> = JSON.parse(raw);
-        Object.entries(readChaptersObj).forEach(([userId, map]) => {
-          if (userId && map) {
-            userReadChapters.set(userId, map);
-          }
-        });
-      }
-    } catch (err) {
-      console.error("[Storage] Error loading READ_CHAPTERS_FILE:", err);
-    }
-  }
-
-  console.log(`[Storage] Loaded persistent database: ${usersByUsername.size} registered users, ${sessions.size} active sessions.`);
-}
-
-function saveDataToDisk() {
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-
-    // Deduplicate user objects by unique user ID
-    const userMap = new Map<string, ServerUser>();
-    usersByUsername.forEach((u) => {
-      if (u && u.id) userMap.set(u.id, u);
-    });
-    usersByEmail.forEach((u) => {
-      if (u && u.id) userMap.set(u.id, u);
-    });
-    const usersArray = Array.from(userMap.values());
-
-    safeWriteJsonSync(USERS_FILE, usersArray);
-
-    const sessionsObj = Object.fromEntries(sessions.entries());
-    safeWriteJsonSync(SESSIONS_FILE, sessionsObj);
-
-    const watchlistsObj = Object.fromEntries(userWatchlists.entries());
-    safeWriteJsonSync(WATCHLISTS_FILE, watchlistsObj);
-
-    const recentlyViewedObj = Object.fromEntries(userRecentlyViewed.entries());
-    safeWriteJsonSync(RECENTLY_VIEWED_FILE, recentlyViewedObj);
-
-    const readChaptersObj = Object.fromEntries(userReadChapters.entries());
-    safeWriteJsonSync(READ_CHAPTERS_FILE, readChaptersObj);
-  } catch (err) {
-    console.error("[Storage] Error saving data to disk:", err);
-  }
-}
-
-// Load existing data on server startup
-loadDataFromDisk();
-
-// Process exit handlers to ensure pending memory updates are safely written to disk
-process.on("SIGINT", () => {
-  saveDataToDisk();
-  process.exit(0);
-});
-
-process.on("SIGTERM", () => {
-  saveDataToDisk();
-  process.exit(0);
-});
 
 // Helper function to calculate exact age in years based on registered Date of Birth
 function calculateAge(dobString: string): number {
@@ -396,17 +252,18 @@ function calculateAge(dobString: string): number {
   return age;
 }
 
-function getAuthUser(req: express.Request): ServerUser | null {
+async function getAuthUser(req: express.Request): Promise<ServerUser | null> {
   const authHeader = req.headers.authorization || req.headers["x-auth-token"];
   if (!authHeader) return null;
   const token = typeof authHeader === "string" ? authHeader.replace(/^Bearer\s+/i, "").trim() : "";
   if (!token) return null;
-  return sessions.get(token) || null;
+
+  return await getUserByAuthToken(token);
 }
 
 // RULE 1, 2, 3: Default-deny. Compute eligibility server-side from registered date of birth on each request.
-function isUserAdult(req: express.Request): boolean {
-  const user = getAuthUser(req);
+async function isUserAdult(req: express.Request): Promise<boolean> {
+  const user = await getAuthUser(req);
   if (!user || !user.dateOfBirth) return false;
   return calculateAge(user.dateOfBirth) >= 18;
 }
@@ -429,11 +286,15 @@ function sanitizeUser(user: ServerUser) {
 }
 
 // Auth API Endpoints
-app.post("/api/auth/register", (req, res) => {
+app.post("/api/auth/register", authLimiter, validateRequest(registerSchema), async (req, res) => {
   try {
     const { username, email, password, dateOfBirth } = req.body;
     if (!username || !email || !password || !dateOfBirth) {
       return res.status(400).json({ error: "Заполните все обязательные поля (имя, email, пароль, дата рождения)" });
+    }
+
+    if (typeof password !== "string" || password.length < 8) {
+      return res.status(400).json({ error: "Пароль должен быть не менее 8 символов" });
     }
 
     const cleanUsername = username.trim();
@@ -443,11 +304,13 @@ app.post("/api/auth/register", (req, res) => {
       return res.status(400).json({ error: "Укажите корректный адрес электронной почты" });
     }
 
-    if (usersByEmail.has(cleanEmail)) {
+    const existingEmail = await findUserByEmail(cleanEmail);
+    if (existingEmail) {
       return res.status(400).json({ error: "Этот email уже зарегистрирован" });
     }
 
-    if (usersByUsername.has(cleanUsername.toLowerCase())) {
+    const existingUser = await findUserByUsername(cleanUsername);
+    if (existingUser) {
       return res.status(400).json({ error: "Пользователь с таким именем уже существует" });
     }
 
@@ -456,71 +319,65 @@ app.post("/api/auth/register", (req, res) => {
       return res.status(400).json({ error: "Укажите корректную дату рождения" });
     }
 
-    const newUser: ServerUser = {
-      id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    const { token, user } = await signUpWithSupabase({
       username: cleanUsername,
       email: cleanEmail,
-      passwordHash: password,
+      password,
       dateOfBirth,
-      createdAt: new Date().toISOString()
-    };
-
-    usersByUsername.set(cleanUsername.toLowerCase(), newUser);
-    usersByEmail.set(cleanEmail, newUser);
-
-    const token = `token_${newUser.id}_${Date.now()}`;
-    sessions.set(token, newUser);
-
-    saveDataToDisk();
-
-    res.json({
-      token,
-      user: sanitizeUser(newUser)
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post("/api/auth/login", (req, res) => {
-  try {
-    const { login, password } = req.body;
-    if (!login || !password) {
-      return res.status(400).json({ error: "Введите имя пользователя/email и пароль" });
-    }
-
-    const cleanLogin = login.trim().toLowerCase();
-    const user = usersByUsername.get(cleanLogin) || usersByEmail.get(cleanLogin);
-
-    if (!user || user.passwordHash !== password) {
-      return res.status(400).json({ error: "Неверный логин или пароль" });
-    }
-
-    const token = `token_${user.id}_${Date.now()}`;
-    sessions.set(token, user);
-
-    saveDataToDisk();
 
     res.json({
       token,
       user: sanitizeUser(user)
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ error: error.message || "Ошибка при регистрации" });
   }
 });
 
-app.get("/api/auth/me", (req, res) => {
-  const user = getAuthUser(req);
+app.post("/api/auth/login", authLimiter, validateRequest(loginSchema), async (req, res) => {
+  try {
+    const { login, password } = req.body;
+    if (!login || !password) {
+      return res.status(400).json({ error: "Введите имя пользователя/email и пароль" });
+    }
+
+    const { token, user } = await signInWithSupabase({
+      login,
+      password,
+    });
+
+    res.json({
+      token,
+      user: sanitizeUser(user)
+    });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || "Неверный логин или пароль" });
+  }
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  const authHeader = req.headers.authorization || req.headers["x-auth-token"];
+  if (authHeader) {
+    const token = typeof authHeader === "string" ? authHeader.replace(/^Bearer\s+/i, "").trim() : "";
+    if (token) {
+      await signOutWithSupabase(token);
+    }
+  }
+  res.json({ success: true, message: "Вы успешно вышли из системы" });
+});
+
+app.get("/api/auth/me", async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
   res.json({ user: sanitizeUser(user) });
 });
 
-app.put("/api/auth/profile", (req, res) => {
+app.put("/api/auth/profile", validateRequest(updateProfileSchema), async (req, res) => {
   try {
-    const user = getAuthUser(req);
+    const user = await getAuthUser(req);
     if (!user) {
       return res.status(401).json({ error: "Пользователь не авторизован" });
     }
@@ -534,38 +391,42 @@ app.put("/api/auth/profile", (req, res) => {
       });
     }
 
+    const updates: any = {};
+
     if (email && email.trim()) {
       const cleanEmail = email.trim().toLowerCase();
       if (cleanEmail !== user.email) {
-        if (usersByEmail.has(cleanEmail)) {
+        const existing = await findUserByEmail(cleanEmail);
+        if (existing) {
           return res.status(400).json({ error: "Этот email уже зарегистрирован." });
         }
-        usersByEmail.delete(user.email);
+        updates.email = cleanEmail;
         user.email = cleanEmail;
-        usersByEmail.set(cleanEmail, user);
       }
     }
 
     if (username && username.trim()) {
       const cleanUsername = username.trim();
       if (cleanUsername.toLowerCase() !== user.username.toLowerCase()) {
-        if (usersByUsername.has(cleanUsername.toLowerCase())) {
+        const existing = await findUserByUsername(cleanUsername);
+        if (existing) {
           return res.status(400).json({ error: "Пользователь с таким именем уже существует." });
         }
-        usersByUsername.delete(user.username.toLowerCase());
+        updates.username = cleanUsername;
         user.username = cleanUsername;
-        usersByUsername.set(cleanUsername.toLowerCase(), user);
       }
     }
 
-    if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
-    if (bio !== undefined) user.bio = bio.slice(0, 300); // 300 max chars
-    if (nicknameEffect !== undefined) user.nicknameEffect = nicknameEffect;
-    if (backgroundBanner !== undefined) user.backgroundBanner = backgroundBanner;
+    if (avatarUrl !== undefined) { updates.avatarUrl = avatarUrl; user.avatarUrl = avatarUrl; }
+    if (bio !== undefined) { updates.bio = bio.slice(0, 300); user.bio = bio.slice(0, 300); }
+    if (nicknameEffect !== undefined) { updates.nicknameEffect = nicknameEffect; user.nicknameEffect = nicknameEffect; }
+    if (backgroundBanner !== undefined) { updates.backgroundBanner = backgroundBanner; user.backgroundBanner = backgroundBanner; }
 
-    saveDataToDisk();
+    // Persist profile updates in Supabase PostgreSQL
+    const updatedDbUser = await updateUserProfile(user.id, updates);
+    const finalUser = updatedDbUser || user;
 
-    res.json({ user: sanitizeUser(user) });
+    res.json({ user: sanitizeUser(finalUser) });
   } catch (error: any) {
     console.error("Profile update server error:", error);
     res.status(500).json({ error: error.message || "Ошибка сервера при обновлении профиля" });
@@ -573,17 +434,17 @@ app.put("/api/auth/profile", (req, res) => {
 });
 
 // Watchlist API Endpoints for server-side persistence
-app.get("/api/user/watchlist", (req, res) => {
-  const user = getAuthUser(req);
+app.get("/api/user/watchlist", async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
-  const watchlist = userWatchlists.get(user.id) || {};
+  const watchlist = await getUserWatchlist(user.id);
   res.json({ watchlist });
 });
 
-app.post("/api/user/watchlist", (req, res) => {
-  const user = getAuthUser(req);
+app.post("/api/user/watchlist", validateRequest(saveWatchlistSchema), async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
@@ -592,45 +453,32 @@ app.post("/api/user/watchlist", (req, res) => {
     return res.status(400).json({ error: "Укажите mediaId и данные элемента" });
   }
 
-  let list = userWatchlists.get(user.id);
-  if (!list) {
-    list = {};
-    userWatchlists.set(user.id, list);
-  }
-  list[mediaId] = {
-    ...item,
-    updatedAt: new Date().toISOString()
-  };
-  saveDataToDisk();
-  res.json({ success: true, watchlist: list });
+  const updatedWatchlist = await saveWatchlistItem(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), item);
+  res.json({ success: true, watchlist: updatedWatchlist });
 });
 
-app.delete("/api/user/watchlist/:mediaId", (req, res) => {
-  const user = getAuthUser(req);
+app.delete("/api/user/watchlist/:mediaId", validateRequest(deleteWatchlistSchema), async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
-  const mediaId = parseInt(req.params.mediaId, 10);
-  const list = userWatchlists.get(user.id);
-  if (list && list[mediaId]) {
-    delete list[mediaId];
-  }
-  saveDataToDisk();
-  res.json({ success: true, watchlist: list || {} });
+  const mediaId = typeof req.params.mediaId === "number" ? req.params.mediaId : parseInt(req.params.mediaId, 10);
+  const updatedWatchlist = await deleteWatchlistItem(user.id, mediaId);
+  res.json({ success: true, watchlist: updatedWatchlist });
 });
 
 // Recently Viewed API Endpoints
-app.get("/api/user/recently-viewed", (req, res) => {
-  const user = getAuthUser(req);
+app.get("/api/user/recently-viewed", async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
-  const recentlyViewed = userRecentlyViewed.get(user.id) || [];
+  const recentlyViewed = await getUserRecentlyViewed(user.id);
   res.json({ recentlyViewed });
 });
 
-app.post("/api/user/recently-viewed", (req, res) => {
-  const user = getAuthUser(req);
+app.post("/api/user/recently-viewed", validateRequest(addRecentlyViewedSchema), async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
@@ -639,40 +487,31 @@ app.post("/api/user/recently-viewed", (req, res) => {
     return res.status(400).json({ error: "Укажите медиа-объект" });
   }
 
-  let list = userRecentlyViewed.get(user.id) || [];
-  // Deduplicate and push to top
-  list = list.filter((item: any) => item && item.id !== media.id);
-  list.unshift(media);
-  if (list.length > 20) {
-    list = list.slice(0, 20);
-  }
-  userRecentlyViewed.set(user.id, list);
-  saveDataToDisk();
-  res.json({ success: true, recentlyViewed: list });
+  const updatedRecentlyViewed = await addRecentlyViewed(user.id, media);
+  res.json({ success: true, recentlyViewed: updatedRecentlyViewed });
 });
 
-app.delete("/api/user/recently-viewed", (req, res) => {
-  const user = getAuthUser(req);
+app.delete("/api/user/recently-viewed", async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
-  userRecentlyViewed.set(user.id, []);
-  saveDataToDisk();
-  res.json({ success: true, recentlyViewed: [] });
+  const updatedRecentlyViewed = await clearRecentlyViewed(user.id);
+  res.json({ success: true, recentlyViewed: updatedRecentlyViewed });
 });
 
 // User Read Chapters API Endpoints
-app.get("/api/user/read-chapters", (req, res) => {
-  const user = getAuthUser(req);
+app.get("/api/user/read-chapters", async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
-  const readMap = userReadChapters.get(user.id) || {};
+  const readMap = await getUserReadChapters(user.id);
   res.json({ readChapters: readMap });
 });
 
-app.post("/api/user/read-chapters", (req, res) => {
-  const user = getAuthUser(req);
+app.post("/api/user/read-chapters", validateRequest(saveReadChaptersSchema), async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
@@ -681,18 +520,12 @@ app.post("/api/user/read-chapters", (req, res) => {
     return res.status(400).json({ error: "Укажите mediaId и массив прочитанных глав" });
   }
 
-  let userMap = userReadChapters.get(user.id);
-  if (!userMap) {
-    userMap = {};
-    userReadChapters.set(user.id, userMap);
-  }
-  userMap[mediaId] = readChapters;
-  saveDataToDisk();
-  res.json({ success: true, readChapters: userMap[mediaId] });
+  const updatedReadChapters = await saveReadChaptersForMedia(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), readChapters);
+  res.json({ success: true, readChapters: updatedReadChapters });
 });
 
-app.post("/api/user/read-chapters/toggle", (req, res) => {
-  const user = getAuthUser(req);
+app.post("/api/user/read-chapters/toggle", validateRequest(toggleReadChapterSchema), async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
@@ -701,24 +534,12 @@ app.post("/api/user/read-chapters/toggle", (req, res) => {
     return res.status(400).json({ error: "Укажите mediaId и chapterNumber" });
   }
 
-  let userMap = userReadChapters.get(user.id);
-  if (!userMap) {
-    userMap = {};
-    userReadChapters.set(user.id, userMap);
-  }
-  let currentList = userMap[mediaId] || [];
-  if (currentList.includes(chapterNumber)) {
-    currentList = currentList.filter((ch) => ch !== chapterNumber);
-  } else {
-    currentList = [...currentList, chapterNumber].sort((a, b) => a - b);
-  }
-  userMap[mediaId] = currentList;
-  saveDataToDisk();
-  res.json({ success: true, readChapters: currentList });
+  const updatedReadChapters = await toggleReadChapter(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), chapterNumber);
+  res.json({ success: true, readChapters: updatedReadChapters });
 });
 
-app.post("/api/user/read-chapters/mark-up-to", (req, res) => {
-  const user = getAuthUser(req);
+app.post("/api/user/read-chapters/mark-up-to", validateRequest(markUpToChapterSchema), async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
@@ -727,79 +548,22 @@ app.post("/api/user/read-chapters/mark-up-to", (req, res) => {
     return res.status(400).json({ error: "Укажите mediaId и chapterNumber" });
   }
 
-  let userMap = userReadChapters.get(user.id);
-  if (!userMap) {
-    userMap = {};
-    userReadChapters.set(user.id, userMap);
-  }
-  const newList = [];
-  for (let i = 1; i <= chapterNumber; i++) {
-    newList.push(i);
-  }
-  userMap[mediaId] = newList;
-  saveDataToDisk();
-  res.json({ success: true, readChapters: newList });
+  const updatedReadChapters = await markUpToChapter(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), chapterNumber);
+  res.json({ success: true, readChapters: updatedReadChapters });
 });
 
 // Full User Data Force Sync Endpoint
-app.post("/api/user/sync", (req, res) => {
-  const user = getAuthUser(req);
+app.post("/api/user/sync", validateRequest(userSyncSchema), async (req, res) => {
+  const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
 
   const { watchlist = {}, readChapters = {}, recentlyViewed = [] } = req.body;
 
-  // 1. Merge Watchlist
-  let serverWatchlist = userWatchlists.get(user.id) || {};
-  const mergedWatchlist: Record<number, any> = { ...serverWatchlist };
-
-  for (const [key, item] of Object.entries(watchlist)) {
-    const mediaId = parseInt(key, 10);
-    if (!mediaId || !item) continue;
-    const existing = mergedWatchlist[mediaId];
-    if (!existing) {
-      mergedWatchlist[mediaId] = item;
-    } else {
-      const localTime = (item as any).updatedAt ? new Date((item as any).updatedAt).getTime() : 0;
-      const serverTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-      if (localTime >= serverTime) {
-        mergedWatchlist[mediaId] = { ...existing, ...(item as any) };
-      } else {
-        mergedWatchlist[mediaId] = { ...(item as any), ...existing };
-      }
-    }
-  }
-  userWatchlists.set(user.id, mergedWatchlist);
-
-  // 2. Merge Read Chapters
-  let serverReadMap = userReadChapters.get(user.id) || {};
-  const mergedReadMap: Record<number, number[]> = { ...serverReadMap };
-
-  for (const [key, chapters] of Object.entries(readChapters)) {
-    const mediaId = parseInt(key, 10);
-    if (!mediaId || !Array.isArray(chapters)) continue;
-    const existing = mergedReadMap[mediaId] || [];
-    const combined = Array.from(new Set([...existing, ...chapters])).sort((a: number, b: number) => a - b);
-    mergedReadMap[mediaId] = combined;
-  }
-  userReadChapters.set(user.id, mergedReadMap);
-
-  // 3. Merge Recently Viewed
-  let serverRecentlyViewed = userRecentlyViewed.get(user.id) || [];
-  const combinedRV: any[] = [];
-  const seenIds = new Set<number>();
-
-  for (const item of [...(Array.isArray(recentlyViewed) ? recentlyViewed : []), ...serverRecentlyViewed]) {
-    if (item && item.id && !seenIds.has(item.id)) {
-      seenIds.add(item.id);
-      combinedRV.push(item);
-    }
-  }
-  const mergedRV = combinedRV.slice(0, 20);
-  userRecentlyViewed.set(user.id, mergedRV);
-
-  saveDataToDisk();
+  const mergedWatchlist = await syncWatchlist(user.id, watchlist);
+  const mergedReadMap = await syncReadChapters(user.id, readChapters);
+  const mergedRV = await syncRecentlyViewed(user.id, recentlyViewed);
 
   res.json({
     success: true,
@@ -813,7 +577,7 @@ app.post("/api/user/sync", (req, res) => {
 // API Endpoint 1: Home Dashboard Data (Trending, Airing Today, Popular Manga, News)
 app.get("/api/home", async (req, res) => {
   try {
-    const isAdultUser = isUserAdult(req);
+    const isAdultUser = await isUserAdult(req);
     const query = `
       query {
         trending: Page(page: 1, perPage: 12) {
@@ -870,7 +634,7 @@ app.get("/api/home", async (req, res) => {
 // API Endpoint 2: Airing Schedule for the next 7 days
 app.get("/api/airing-schedule", async (req, res) => {
   try {
-    const isAdultUser = isUserAdult(req);
+    const isAdultUser = await isUserAdult(req);
     const now = Math.floor(Date.now() / 1000);
     const startOfWeek = now - 86400; // 1 day ago
     const endOfWeek = now + 604800; // 7 days ahead
@@ -914,7 +678,7 @@ app.get("/api/airing-schedule", async (req, res) => {
 // API Endpoint 3: Full Catalog Query with filters & pagination
 app.get("/api/catalog", async (req, res) => {
   try {
-    const isAdultUser = isUserAdult(req);
+    const isAdultUser = await isUserAdult(req);
     const {
       type = "ANIME",
       page = "1",
@@ -1149,7 +913,7 @@ app.get("/api/media/:id", async (req, res) => {
     }
 
     const isAdultContent = media.isAdult === true || (Array.isArray(media.genres) && media.genres.includes("Hentai"));
-    const isAdultUser = isUserAdult(req);
+    const isAdultUser = await isUserAdult(req);
 
     // If user is under 18 or not logged in, return 404 Media not found (behave as if it doesn't exist)
     if (isAdultContent && !isAdultUser) {
@@ -1211,7 +975,7 @@ app.get("/api/media/:id", async (req, res) => {
 app.get("/api/studio/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const isAdultUser = isUserAdult(req);
+    const isAdultUser = await isUserAdult(req);
     const query = `
       query ($id: Int) {
         Studio(id: $id) {
@@ -1268,7 +1032,7 @@ app.get("/api/search", async (req, res) => {
     }
 
     const searchTerm = q.trim();
-    const isAdultUser = isUserAdult(req);
+    const isAdultUser = await isUserAdult(req);
 
     const mediaType = (type && typeof type === "string" && type.toUpperCase() !== "ALL") 
       ? type.toUpperCase() 
@@ -1414,7 +1178,7 @@ app.get("/api/news", (req, res) => {
 });
 
 // API Endpoint 8: Gemini AI Translation for Synopsis
-app.post("/api/ai/translate", async (req, res) => {
+app.post("/api/ai/translate", aiLimiter, async (req, res) => {
   try {
     const { text, title } = req.body;
     if (!text || typeof text !== "string") {
@@ -1453,7 +1217,7 @@ ${text}`;
 });
 
 // API Endpoint 9: Gemini AI Anime Assistant & Smart Recommendations
-app.post("/api/ai/recommend", async (req, res) => {
+app.post("/api/ai/recommend", aiLimiter, async (req, res) => {
   try {
     const { prompt, userHistory = [] } = req.body;
     if (!prompt || typeof prompt !== "string") {
