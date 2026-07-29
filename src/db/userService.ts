@@ -154,7 +154,7 @@ export async function signUpWithSupabase(userData: {
   const cleanUsername = userData.username.trim();
   const cleanEmail = userData.email.trim().toLowerCase();
 
-  const { data: authData, error: authError } = await supabaseServer.auth.signUp({
+  const signUpRes: any = await supabaseServer.auth.signUp({
     email: cleanEmail,
     password: userData.password,
     options: {
@@ -165,35 +165,40 @@ export async function signUpWithSupabase(userData: {
     },
   });
 
-  if (authError) {
-    console.error("[UserService] Supabase signUp error:", authError.message);
-    throw new Error(authError.message);
+  if (signUpRes?.error) {
+    const msg = typeof signUpRes.error === "string"
+      ? signUpRes.error
+      : (signUpRes.error.message || "Ошибка при регистрации в Supabase Auth");
+    console.error("[UserService] Supabase signUp error:", msg);
+    throw new Error(msg);
   }
 
-  if (!authData.user) {
+  if (!signUpRes?.data?.user) {
     throw new Error("Не удалось зарегистрировать пользователя");
   }
 
-  let token = authData.session?.access_token;
+  const authUser = signUpRes.data.user;
+
+  let token = signUpRes.data.session?.access_token;
   if (!token) {
     const { data: signInData, error: signInError } = await supabaseServer.auth.signInWithPassword({
       email: cleanEmail,
       password: userData.password,
     });
-    if (!signInError && signInData.session) {
+    if (!signInError && signInData?.session) {
       token = signInData.session.access_token;
     }
   }
 
   const user = await ensureUserProfile(
-    authData.user.id,
+    authUser.id,
     cleanEmail,
     cleanUsername,
     userData.dateOfBirth
   );
 
   return {
-    token: token || `token_${authData.user.id}`,
+    token: token || `token_${authUser.id}`,
     user,
   };
 }
@@ -205,21 +210,27 @@ export async function signInWithSupabase(loginData: {
   const cleanLogin = loginData.login.trim();
   let email = cleanLogin.toLowerCase();
 
-  if (!cleanLogin.includes("@")) {
-    const existingUser = await findUserByUsername(cleanLogin);
-    if (existingUser && existingUser.email) {
-      email = existingUser.email;
-    }
+  const existingUser = await findUserByLogin(cleanLogin);
+  if (existingUser && existingUser.email) {
+    email = existingUser.email;
   }
+
+  console.log(`[UserService] Attempting Supabase signInWithPassword for resolved email: "${email}"`);
 
   const { data: authData, error: authError } = await supabaseServer.auth.signInWithPassword({
     email,
     password: loginData.password,
   });
 
-  if (authError || !authData.session || !authData.user) {
-    console.error("[UserService] Supabase signInWithPassword error:", authError?.message);
-    throw new Error("Неверный логин или пароль");
+  if (authError) {
+    console.error("[UserService] Complete Supabase authError object:", authError);
+    console.error("[UserService] Supabase signInWithPassword error details:", JSON.stringify(authError, null, 2));
+    throw new Error(authError.message);
+  }
+
+  if (!authData.session || !authData.user) {
+    console.error("[UserService] Supabase signInWithPassword returned no session or user");
+    throw new Error("Не удалось получить сессию Supabase Auth");
   }
 
   const token = authData.session.access_token;

@@ -106,6 +106,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const computedRegAge = dobValidation.isoDate ? calculateAge(dobValidation.isoDate) : 0;
   const isRegAdult = computedRegAge >= 18;
 
+  // Helper to safely extract error message from API response or thrown error
+  const extractErrorMsg = (dataOrError: any, defaultMsg: string): string => {
+    if (!dataOrError) return defaultMsg;
+    if (typeof dataOrError === "string" && dataOrError.trim()) return dataOrError;
+    if (typeof dataOrError.error === "string" && dataOrError.error.trim()) return dataOrError.error;
+    if (dataOrError.error && typeof dataOrError.error.message === "string" && dataOrError.error.message.trim()) {
+      return dataOrError.error.message;
+    }
+    if (typeof dataOrError.message === "string" && dataOrError.message.trim()) return dataOrError.message;
+    return defaultMsg;
+  };
+
   // Handle Login
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,7 +131,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Ошибка входа");
+        throw new Error(extractErrorMsg(data, "Ошибка входа"));
       }
 
       saveAuthData(data.token, data.user);
@@ -129,10 +141,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onClose();
       }, 500);
     } catch (err: any) {
-      if (err.name === "TypeError" && err.message.includes("fetch")) {
+      if (err.name === "TypeError" && err.message?.includes("fetch")) {
         setError("Не удалось связаться с сервером. Пожалуйста, проверьте интернет-соединение и повторите попытку.");
       } else {
-        setError(err.message || "Ошибка входа");
+        setError(extractErrorMsg(err, "Ошибка входа"));
       }
     } finally {
       setLoading(false);
@@ -164,7 +176,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Ошибка регистрации");
+        throw new Error(extractErrorMsg(data, "Ошибка регистрации"));
       }
 
       saveAuthData(data.token, data.user);
@@ -174,10 +186,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onClose();
       }, 600);
     } catch (err: any) {
-      if (err.name === "TypeError" && err.message.includes("fetch")) {
+      if (err.name === "TypeError" && err.message?.includes("fetch")) {
         setError("Не удалось связаться с сервером. Пожалуйста, проверьте подключение к сети и повторите попытку.");
       } else {
-        setError(err.message || "Ошибка регистрации");
+        setError(extractErrorMsg(err, "Ошибка регистрации"));
       }
     } finally {
       setLoading(false);

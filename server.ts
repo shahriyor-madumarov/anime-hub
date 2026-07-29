@@ -331,7 +331,11 @@ app.post("/api/auth/register", authLimiter, validateRequest(registerSchema), asy
       user: sanitizeUser(user)
     });
   } catch (error: any) {
-    res.status(400).json({ error: error.message || "Ошибка при регистрации" });
+    const errorMsg = typeof error === "string"
+      ? error
+      : (error?.message && typeof error.message === "string" && error.message.trim() ? error.message : "Ошибка при регистрации");
+    console.error("[API Register Error]:", errorMsg, error);
+    res.status(400).json({ error: errorMsg });
   }
 });
 
@@ -352,7 +356,11 @@ app.post("/api/auth/login", authLimiter, validateRequest(loginSchema), async (re
       user: sanitizeUser(user)
     });
   } catch (error: any) {
-    res.status(400).json({ error: error.message || "Неверный логин или пароль" });
+    const errorMsg = typeof error === "string"
+      ? error
+      : (error?.message && typeof error.message === "string" && error.message.trim() ? error.message : "Неверный логин или пароль");
+    console.error("[API Login Error]:", errorMsg, error);
+    res.status(400).json({ error: errorMsg });
   }
 });
 
