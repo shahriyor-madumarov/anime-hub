@@ -1,4 +1,4 @@
-import { supabaseServer } from "./supabaseServer";
+import { getSupabaseClient } from "./supabaseServer";
 
 export interface WatchlistItemPayload {
   mediaId: number;
@@ -25,9 +25,10 @@ function normalizeStatus(statusStr?: string): string {
   return "watching";
 }
 
-export async function getUserWatchlist(userId: string): Promise<Record<number, any>> {
+export async function getUserWatchlist(userId: string, token?: string): Promise<Record<number, any>> {
   try {
-    const { data, error } = await supabaseServer
+    const client = getSupabaseClient(token);
+    const { data, error } = await client
       .from("watchlist_items")
       .select("*")
       .eq("user_id", userId);
@@ -53,7 +54,7 @@ export async function getUserWatchlist(userId: string): Promise<Record<number, a
       }
     }
     return watchlist;
-  } catch (err) {
+  } catch (err: any) {
     console.error("[WatchlistService] Exception in getUserWatchlist:", err);
     return {};
   }
@@ -62,7 +63,8 @@ export async function getUserWatchlist(userId: string): Promise<Record<number, a
 export async function saveWatchlistItem(
   userId: string,
   mediaId: number,
-  item: any
+  item: any,
+  token?: string
 ): Promise<Record<number, any>> {
   const mediaType = normalizeMediaType(item.type || item.mediaType);
   const status = normalizeStatus(item.status);
@@ -78,7 +80,8 @@ export async function saveWatchlistItem(
   };
 
   try {
-    const { error } = await supabaseServer
+    const client = getSupabaseClient(token);
+    const { error } = await client
       .from("watchlist_items")
       .upsert(
         {
@@ -98,19 +101,21 @@ export async function saveWatchlistItem(
     if (error) {
       console.error("[WatchlistService] Error upserting watchlist item:", error.message);
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error("[WatchlistService] Exception in saveWatchlistItem:", err);
   }
 
-  return getUserWatchlist(userId);
+  return getUserWatchlist(userId, token);
 }
 
 export async function deleteWatchlistItem(
   userId: string,
-  mediaId: number
+  mediaId: number,
+  token?: string
 ): Promise<Record<number, any>> {
   try {
-    const { error } = await supabaseServer
+    const client = getSupabaseClient(token);
+    const { error } = await client
       .from("watchlist_items")
       .delete()
       .eq("user_id", userId)
@@ -119,19 +124,20 @@ export async function deleteWatchlistItem(
     if (error) {
       console.error("[WatchlistService] Error deleting watchlist item:", error.message);
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error("[WatchlistService] Exception in deleteWatchlistItem:", err);
   }
 
-  return getUserWatchlist(userId);
+  return getUserWatchlist(userId, token);
 }
 
 export async function syncWatchlist(
   userId: string,
   clientWatchlist: Record<number, any>,
-  serverWatchlistFallback: Record<number, any> = {}
+  serverWatchlistFallback: Record<number, any> = {},
+  token?: string
 ): Promise<Record<number, any>> {
-  const dbWatchlist = await getUserWatchlist(userId);
+  const dbWatchlist = await getUserWatchlist(userId, token);
   const baseWatchlist = Object.keys(dbWatchlist).length > 0 ? dbWatchlist : serverWatchlistFallback;
 
   const merged: Record<number, any> = { ...baseWatchlist };
@@ -157,9 +163,9 @@ export async function syncWatchlist(
   for (const [key, item] of Object.entries(merged)) {
     const mediaId = parseInt(key, 10);
     if (mediaId && item) {
-      await saveWatchlistItem(userId, mediaId, item);
+      await saveWatchlistItem(userId, mediaId, item, token);
     }
   }
 
-  return getUserWatchlist(userId);
+  return getUserWatchlist(userId, token);
 }

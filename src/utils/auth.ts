@@ -63,6 +63,9 @@ export function clearAuthData() {
   try {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("animix_auth_changed"));
+    }
   } catch (e) {
     console.error("Failed to clear auth data", e);
   }

@@ -15,6 +15,7 @@ import {
   signInWithSupabase,
   getUserByAuthToken,
   signOutWithSupabase,
+  getUserStats,
 } from "./src/db/userService";
 import {
   getUserWatchlist,
@@ -35,6 +36,12 @@ import {
   markUpToChapter,
   syncReadChapters
 } from "./src/db/readChaptersService";
+import {
+  uploadAvatar,
+  deleteAvatar,
+  uploadBanner,
+  deleteBanner
+} from "./src/db/storageService";
 import {
   validateRequest,
   registerSchema,
@@ -252,10 +259,13 @@ function calculateAge(dobString: string): number {
   return age;
 }
 
-async function getAuthUser(req: express.Request): Promise<ServerUser | null> {
+function extractToken(req: express.Request): string {
   const authHeader = req.headers.authorization || req.headers["x-auth-token"];
-  if (!authHeader) return null;
-  const token = typeof authHeader === "string" ? authHeader.replace(/^Bearer\s+/i, "").trim() : "";
+  return typeof authHeader === "string" ? authHeader.replace(/^Bearer\s+/i, "").trim() : "";
+}
+
+async function getAuthUser(req: express.Request): Promise<ServerUser | null> {
+  const token = extractToken(req);
   if (!token) return null;
 
   return await getUserByAuthToken(token);
@@ -287,36 +297,63 @@ function sanitizeUser(user: ServerUser) {
 
 // Auth API Endpoints
 app.post("/api/auth/register", authLimiter, validateRequest(registerSchema), async (req, res) => {
+  const logRegisterError = (status: number, errorBody: { error: string }, errSource?: any) => {
+    const supabaseMessage = errSource?.supabaseError?.message || errSource?.message || (errSource && typeof errSource === "string" ? errSource : null);
+    const supabaseCode = errSource?.supabaseError?.code || errSource?.code || errSource?.status || null;
+    const fullErrorObj = errSource || errorBody;
+
+    console.error("[REGISTER TRACE 7] Registration Error details:", {
+      message: supabaseMessage || errorBody.error,
+      code: supabaseCode,
+      status: status,
+      fullError: fullErrorObj,
+      stack: errSource?.stack || new Error().stack,
+    });
+    console.log("[REGISTER TRACE 8] Express route returning JSON to frontend (Error):", JSON.stringify(errorBody));
+  };
+
   try {
     const { username, email, password, dateOfBirth } = req.body;
     if (!username || !email || !password || !dateOfBirth) {
-      return res.status(400).json({ error: "Заполните все обязательные поля (имя, email, пароль, дата рождения)" });
+      const errBody = { error: "Заполните все обязательные поля (имя, email, пароль, дата рождения)" };
+      logRegisterError(400, errBody);
+      return res.status(400).json(errBody);
     }
 
     if (typeof password !== "string" || password.length < 8) {
-      return res.status(400).json({ error: "Пароль должен быть не менее 8 символов" });
+      const errBody = { error: "Пароль должен быть не менее 8 символов" };
+      logRegisterError(400, errBody);
+      return res.status(400).json(errBody);
     }
 
     const cleanUsername = username.trim();
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail || !cleanEmail.includes("@")) {
-      return res.status(400).json({ error: "Укажите корректный адрес электронной почты" });
+      const errBody = { error: "Укажите корректный адрес электронной почты" };
+      logRegisterError(400, errBody);
+      return res.status(400).json(errBody);
     }
 
     const existingEmail = await findUserByEmail(cleanEmail);
     if (existingEmail) {
-      return res.status(400).json({ error: "Этот email уже зарегистрирован" });
+      const errBody = { error: "Этот email уже зарегистрирован" };
+      logRegisterError(400, errBody);
+      return res.status(400).json(errBody);
     }
 
     const existingUser = await findUserByUsername(cleanUsername);
     if (existingUser) {
-      return res.status(400).json({ error: "Пользователь с таким именем уже существует" });
+      const errBody = { error: "Это имя пользователя уже занято" };
+      logRegisterError(400, errBody);
+      return res.status(400).json(errBody);
     }
 
     const birthDate = new Date(dateOfBirth);
     if (isNaN(birthDate.getTime())) {
-      return res.status(400).json({ error: "Укажите корректную дату рождения" });
+      const errBody = { error: "Укажите корректную дату рождения" };
+      logRegisterError(400, errBody);
+      return res.status(400).json(errBody);
     }
 
     const { token, user } = await signUpWithSupabase({
@@ -326,16 +363,41 @@ app.post("/api/auth/register", authLimiter, validateRequest(registerSchema), asy
       dateOfBirth,
     });
 
-    res.json({
+    const responseJson = {
       token,
       user: sanitizeUser(user)
-    });
+    };
+
+    console.log("[REGISTER TRACE 8] Express route returning JSON to frontend (Success):", JSON.stringify(responseJson));
+    return res.json(responseJson);
   } catch (error: any) {
-    const errorMsg = typeof error === "string"
-      ? error
-      : (error?.message && typeof error.message === "string" && error.message.trim() ? error.message : "Ошибка при регистрации");
-    console.error("[API Register Error]:", errorMsg, error);
-    res.status(400).json({ error: errorMsg });
+    const status = typeof error?.status === "number" ? error.status : (typeof error?.statusCode === "number" ? error.statusCode : 400);
+
+    let rawErrorMsg = "";
+    if (typeof error === "string" && error.trim() && error.trim() !== "{}" && error.trim() !== "[object Object]") {
+      rawErrorMsg = error.trim();
+    } else if (error?.supabaseError?.message && typeof error.supabaseError.message === "string" && error.supabaseError.message.trim() && error.supabaseError.message.trim() !== "{}" && error.supabaseError.message.trim() !== "[object Object]") {
+      rawErrorMsg = error.supabaseError.message.trim();
+    } else if (error?.message && typeof error.message === "string" && error.message.trim() && error.message.trim() !== "{}" && error.message.trim() !== "[object Object]") {
+      rawErrorMsg = error.message.trim();
+    }
+
+    if (!rawErrorMsg || rawErrorMsg === "{}" || rawErrorMsg === "[object Object]") {
+      rawErrorMsg = "Ошибка при регистрации в Supabase Auth";
+    }
+
+    let friendlyMsg = rawErrorMsg;
+    const lower = rawErrorMsg.toLowerCase();
+
+    if (lower.includes("already registered") || lower.includes("already exists") || lower.includes("email_exists") || lower.includes("user_already_exists") || lower.includes("email address has already been registered")) {
+      friendlyMsg = "Этот email уже зарегистрирован";
+    } else if (lower.includes("username") || lower.includes("имя пользователя")) {
+      friendlyMsg = "Это имя пользователя уже занято";
+    }
+
+    const errBody = { error: friendlyMsg };
+    logRegisterError(status, errBody, error);
+    return res.status(status).json(errBody);
   }
 });
 
@@ -441,17 +503,98 @@ app.put("/api/auth/profile", validateRequest(updateProfileSchema), async (req, r
   }
 });
 
+// Storage API Endpoints for Avatars and Banners
+app.post("/api/user/avatar", async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Пользователь не авторизован" });
+    }
+    const { image, mimeType } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: "Передайте изображение (base64) для загрузки" });
+    }
+    const result = await uploadAvatar(user.id, image, mimeType);
+    res.json({ avatarUrl: result.url, user: sanitizeUser(result.user) });
+  } catch (error: any) {
+    console.error("Avatar upload error:", error);
+    res.status(400).json({ error: error.message || "Ошибка при загрузке аватарки" });
+  }
+});
+
+app.delete("/api/user/avatar", async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Пользователь не авторизован" });
+    }
+    const result = await deleteAvatar(user.id);
+    res.json({ success: true, user: sanitizeUser(result.user) });
+  } catch (error: any) {
+    console.error("Avatar delete error:", error);
+    res.status(500).json({ error: error.message || "Ошибка при удалении аватарки" });
+  }
+});
+
+app.post("/api/user/banner", async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Пользователь не авторизован" });
+    }
+    const { image, mimeType } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: "Передайте изображение (base64) для загрузки" });
+    }
+    const result = await uploadBanner(user.id, image, mimeType);
+    res.json({ backgroundBanner: result.url, user: sanitizeUser(result.user) });
+  } catch (error: any) {
+    console.error("Banner upload error:", error);
+    res.status(400).json({ error: error.message || "Ошибка при загрузке баннера" });
+  }
+});
+
+app.delete("/api/user/banner", async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Пользователь не авторизован" });
+    }
+    const result = await deleteBanner(user.id);
+    res.json({ success: true, user: sanitizeUser(result.user) });
+  } catch (error: any) {
+    console.error("Banner delete error:", error);
+    res.status(500).json({ error: error.message || "Ошибка при удалении баннера" });
+  }
+});
+
+app.get("/api/user/stats", async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Пользователь не авторизован" });
+    }
+    const stats = await getUserStats(user.id);
+    res.json(stats);
+  } catch (error: any) {
+    console.error("User stats error:", error);
+    res.status(500).json({ error: "Ошибка получения статистики" });
+  }
+});
+
 // Watchlist API Endpoints for server-side persistence
 app.get("/api/user/watchlist", async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
-  const watchlist = await getUserWatchlist(user.id);
+  const watchlist = await getUserWatchlist(user.id, token);
   res.json({ watchlist });
 });
 
 app.post("/api/user/watchlist", validateRequest(saveWatchlistSchema), async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
@@ -461,31 +604,34 @@ app.post("/api/user/watchlist", validateRequest(saveWatchlistSchema), async (req
     return res.status(400).json({ error: "Укажите mediaId и данные элемента" });
   }
 
-  const updatedWatchlist = await saveWatchlistItem(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), item);
+  const updatedWatchlist = await saveWatchlistItem(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), item, token);
   res.json({ success: true, watchlist: updatedWatchlist });
 });
 
 app.delete("/api/user/watchlist/:mediaId", validateRequest(deleteWatchlistSchema), async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
   const mediaId = typeof req.params.mediaId === "number" ? req.params.mediaId : parseInt(req.params.mediaId, 10);
-  const updatedWatchlist = await deleteWatchlistItem(user.id, mediaId);
+  const updatedWatchlist = await deleteWatchlistItem(user.id, mediaId, token);
   res.json({ success: true, watchlist: updatedWatchlist });
 });
 
 // Recently Viewed API Endpoints
 app.get("/api/user/recently-viewed", async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
-  const recentlyViewed = await getUserRecentlyViewed(user.id);
+  const recentlyViewed = await getUserRecentlyViewed(user.id, token);
   res.json({ recentlyViewed });
 });
 
 app.post("/api/user/recently-viewed", validateRequest(addRecentlyViewedSchema), async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
@@ -495,30 +641,38 @@ app.post("/api/user/recently-viewed", validateRequest(addRecentlyViewedSchema), 
     return res.status(400).json({ error: "Укажите медиа-объект" });
   }
 
-  const updatedRecentlyViewed = await addRecentlyViewed(user.id, media);
+  const updatedRecentlyViewed = await addRecentlyViewed(user.id, media, token);
   res.json({ success: true, recentlyViewed: updatedRecentlyViewed });
 });
 
 app.delete("/api/user/recently-viewed", async (req, res) => {
-  const user = await getAuthUser(req);
-  if (!user) {
-    return res.status(401).json({ error: "Пользователь не авторизован" });
+  try {
+    const token = extractToken(req);
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Пользователь не авторизован" });
+    }
+    const updatedRecentlyViewed = await clearRecentlyViewed(user.id, token);
+    res.json({ success: true, recentlyViewed: updatedRecentlyViewed });
+  } catch (error: any) {
+    console.error("[API Delete Recently Viewed Error]:", error);
+    res.status(500).json({ error: error?.message || "Ошибка сервера при очистке истории" });
   }
-  const updatedRecentlyViewed = await clearRecentlyViewed(user.id);
-  res.json({ success: true, recentlyViewed: updatedRecentlyViewed });
 });
 
 // User Read Chapters API Endpoints
 app.get("/api/user/read-chapters", async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
   }
-  const readMap = await getUserReadChapters(user.id);
+  const readMap = await getUserReadChapters(user.id, token);
   res.json({ readChapters: readMap });
 });
 
 app.post("/api/user/read-chapters", validateRequest(saveReadChaptersSchema), async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
@@ -528,11 +682,12 @@ app.post("/api/user/read-chapters", validateRequest(saveReadChaptersSchema), asy
     return res.status(400).json({ error: "Укажите mediaId и массив прочитанных глав" });
   }
 
-  const updatedReadChapters = await saveReadChaptersForMedia(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), readChapters);
+  const updatedReadChapters = await saveReadChaptersForMedia(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), readChapters, token);
   res.json({ success: true, readChapters: updatedReadChapters });
 });
 
 app.post("/api/user/read-chapters/toggle", validateRequest(toggleReadChapterSchema), async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
@@ -542,11 +697,12 @@ app.post("/api/user/read-chapters/toggle", validateRequest(toggleReadChapterSche
     return res.status(400).json({ error: "Укажите mediaId и chapterNumber" });
   }
 
-  const updatedReadChapters = await toggleReadChapter(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), chapterNumber);
+  const updatedReadChapters = await toggleReadChapter(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), chapterNumber, token);
   res.json({ success: true, readChapters: updatedReadChapters });
 });
 
 app.post("/api/user/read-chapters/mark-up-to", validateRequest(markUpToChapterSchema), async (req, res) => {
+  const token = extractToken(req);
   const user = await getAuthUser(req);
   if (!user) {
     return res.status(401).json({ error: "Пользователь не авторизован" });
@@ -556,7 +712,7 @@ app.post("/api/user/read-chapters/mark-up-to", validateRequest(markUpToChapterSc
     return res.status(400).json({ error: "Укажите mediaId и chapterNumber" });
   }
 
-  const updatedReadChapters = await markUpToChapter(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), chapterNumber);
+  const updatedReadChapters = await markUpToChapter(user.id, typeof mediaId === "number" ? mediaId : parseInt(mediaId, 10), chapterNumber, token);
   res.json({ success: true, readChapters: updatedReadChapters });
 });
 

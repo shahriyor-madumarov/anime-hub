@@ -1,8 +1,9 @@
-import { supabaseServer } from "./supabaseServer";
+import { getSupabaseClient } from "./supabaseServer";
 
-export async function getUserReadChapters(userId: string): Promise<Record<number, number[]>> {
+export async function getUserReadChapters(userId: string, token?: string): Promise<Record<number, number[]>> {
   try {
-    const { data, error } = await supabaseServer
+    const client = getSupabaseClient(token);
+    const { data, error } = await client
       .from("read_chapters")
       .select("media_id, chapter_number")
       .eq("user_id", userId);
@@ -29,7 +30,7 @@ export async function getUserReadChapters(userId: string): Promise<Record<number
       }
     }
     return map;
-  } catch (err) {
+  } catch (err: any) {
     console.error("[ReadChaptersService] Exception in getUserReadChapters:", err);
     return {};
   }
@@ -38,16 +39,20 @@ export async function getUserReadChapters(userId: string): Promise<Record<number
 export async function saveReadChaptersForMedia(
   userId: string,
   mediaId: number,
-  chapters: number[]
+  chapters: number[],
+  token?: string
 ): Promise<number[]> {
   try {
-    // Clean old records for mediaId not in chapters array
+    const client = getSupabaseClient(token);
     if (chapters.length === 0) {
-      await supabaseServer
+      const { error: delError } = await client
         .from("read_chapters")
         .delete()
         .eq("user_id", userId)
         .eq("media_id", mediaId);
+      if (delError) {
+        console.error("[ReadChaptersService] Error deleting read chapters:", delError.message);
+      }
       return [];
     }
 
@@ -59,28 +64,30 @@ export async function saveReadChaptersForMedia(
       updated_at: new Date().toISOString(),
     }));
 
-    const { error } = await supabaseServer
+    const { error } = await client
       .from("read_chapters")
       .upsert(rowsToUpsert, { onConflict: "user_id,media_id,chapter_number" });
 
     if (error) {
       console.error("[ReadChaptersService] Error upserting read chapters:", error.message);
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error("[ReadChaptersService] Exception in saveReadChaptersForMedia:", err);
   }
 
-  const allMap = await getUserReadChapters(userId);
+  const allMap = await getUserReadChapters(userId, token);
   return allMap[mediaId] || [];
 }
 
 export async function toggleReadChapter(
   userId: string,
   mediaId: number,
-  chapterNumber: number
+  chapterNumber: number,
+  token?: string
 ): Promise<number[]> {
   try {
-    const { data } = await supabaseServer
+    const client = getSupabaseClient(token);
+    const { data, error: selectError } = await client
       .from("read_chapters")
       .select("id")
       .eq("user_id", userId)
@@ -88,48 +95,58 @@ export async function toggleReadChapter(
       .eq("chapter_number", chapterNumber)
       .maybeSingle();
 
+    if (selectError) {
+      console.error("[ReadChaptersService] Error checking existing read chapter:", selectError.message);
+    }
+
     if (data) {
-      // Delete if already read
-      await supabaseServer
+      const { error: delError } = await client
         .from("read_chapters")
         .delete()
         .eq("id", data.id);
+      if (delError) {
+        console.error("[ReadChaptersService] Error deleting read chapter:", delError.message);
+      }
     } else {
-      // Insert if not read
-      await supabaseServer.from("read_chapters").insert({
+      const { error: insError } = await client.from("read_chapters").insert({
         user_id: userId,
         media_id: mediaId,
         chapter_number: chapterNumber,
         read_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
+      if (insError) {
+        console.error("[ReadChaptersService] Error inserting read chapter:", insError.message);
+      }
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error("[ReadChaptersService] Exception in toggleReadChapter:", err);
   }
 
-  const allMap = await getUserReadChapters(userId);
+  const allMap = await getUserReadChapters(userId, token);
   return allMap[mediaId] || [];
 }
 
 export async function markUpToChapter(
   userId: string,
   mediaId: number,
-  maxChapterNumber: number
+  maxChapterNumber: number,
+  token?: string
 ): Promise<number[]> {
   const chapters: number[] = [];
   for (let i = 1; i <= maxChapterNumber; i++) {
     chapters.push(i);
   }
-  return saveReadChaptersForMedia(userId, mediaId, chapters);
+  return saveReadChaptersForMedia(userId, mediaId, chapters, token);
 }
 
 export async function syncReadChapters(
   userId: string,
   clientReadMap: Record<number, number[]>,
-  serverReadMapFallback: Record<number, number[]> = {}
+  serverReadMapFallback: Record<number, number[]> = {},
+  token?: string
 ): Promise<Record<number, number[]>> {
-  const dbMap = await getUserReadChapters(userId);
+  const dbMap = await getUserReadChapters(userId, token);
   const baseMap = Object.keys(dbMap).length > 0 ? dbMap : serverReadMapFallback;
 
   const mergedReadMap: Record<number, number[]> = { ...baseMap };
@@ -145,9 +162,9 @@ export async function syncReadChapters(
   for (const [key, chapters] of Object.entries(mergedReadMap)) {
     const mediaId = parseInt(key, 10);
     if (mediaId && Array.isArray(chapters)) {
-      await saveReadChaptersForMedia(userId, mediaId, chapters);
+      await saveReadChaptersForMedia(userId, mediaId, chapters, token);
     }
   }
 
-  return getUserReadChapters(userId);
+  return getUserReadChapters(userId, token);
 }

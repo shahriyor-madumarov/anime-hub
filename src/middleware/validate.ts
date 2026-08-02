@@ -9,6 +9,13 @@ export interface RequestValidationSchemas {
 
 export const validateRequest = (schemas: RequestValidationSchemas) => {
   return async (req: Request, res: Response, next: NextFunction) => {
+    const isRegister = req.originalUrl?.includes('/api/auth/register') || req.path?.includes('/register');
+    if (isRegister) {
+      console.log("[REGISTER TRACE 1] Incoming request body:", JSON.stringify({
+        ...req.body,
+        password: req.body?.password ? "[REDACTED]" : undefined,
+      }));
+    }
     try {
       if (schemas.params) {
         req.params = schemas.params.parse(req.params) as any;
@@ -19,16 +26,37 @@ export const validateRequest = (schemas: RequestValidationSchemas) => {
       if (schemas.body) {
         req.body = schemas.body.parse(req.body);
       }
+      if (isRegister) {
+        console.log("[REGISTER TRACE 2] Validation result: SUCCESS");
+      }
       next();
     } catch (error) {
+      if (isRegister) {
+        console.error("[REGISTER TRACE 2] Validation result: FAILED");
+        console.error("[REGISTER TRACE 7] Validation error details:", {
+          message: error instanceof Error ? error.message : String(error),
+          code: "VALIDATION_ERROR",
+          status: 400,
+          fullError: error,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
       if (error instanceof ZodError) {
         const issues = error.issues.map((e) => {
           const pathStr = e.path.join(".");
           return pathStr ? `${pathStr}: ${e.message}` : e.message;
         }).join("; ");
-        return res.status(400).json({ error: `Validation error: ${issues}` });
+        const errorResponseBody = { error: `Validation error: ${issues}` };
+        if (isRegister) {
+          console.log("[REGISTER TRACE 8] Express route returning JSON to frontend (Validation Error):", JSON.stringify(errorResponseBody));
+        }
+        return res.status(400).json(errorResponseBody);
       }
-      return res.status(400).json({ error: "Invalid request data" });
+      const errorResponseBody = { error: "Invalid request data" };
+      if (isRegister) {
+        console.log("[REGISTER TRACE 8] Express route returning JSON to frontend (Validation Error):", JSON.stringify(errorResponseBody));
+      }
+      return res.status(400).json(errorResponseBody);
     }
   };
 };

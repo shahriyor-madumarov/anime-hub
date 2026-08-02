@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Navbar } from "./components/Navbar";
+import { BottomNav } from "./components/BottomNav";
 import { Footer } from "./components/Footer";
 import { HeroBanner } from "./components/HeroBanner";
 import { AiringTodaySection } from "./components/AiringTodaySection";
@@ -15,20 +16,65 @@ import { RecentlyViewedSection } from "./components/RecentlyViewedSection";
 import { ProfileView } from "./components/ProfileView";
 import { AiAssistantModal } from "./components/AiAssistantModal";
 import { AuthModal } from "./components/AuthModal";
+import { LogoutConfirmModal } from "./components/LogoutConfirmModal";
+import { Toast, ToastMessage } from "./components/Toast";
 import { SideCharacterRails } from "./components/SideCharacterRails";
 import { AiringSchedule, MediaItem, UserProfile } from "./types";
 import { getStoredUser, apiFetch, saveAuthData, clearAuthData, getAuthToken } from "./utils/auth";
 import { syncWatchlistWithServer, addRecentlyViewed, syncRecentlyViewedWithServer, syncReadChaptersWithServer } from "./utils/helpers";
-import { Sparkles, Flame, Star, BookOpen, ChevronRight, RefreshCw } from "lucide-react";
+import { Flame, Star, BookOpen, ChevronRight, RefreshCw } from "lucide-react";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("home");
 
-  // User Authentication & Age Verification State
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(getStoredUser());
+  // User Authentication & State
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => getStoredUser());
+
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<"login" | "register" | "profile">("login");
   const [authModalMessage, setAuthModalMessage] = useState<string | undefined>(undefined);
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
+
+  // Logout state & Toast
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState<boolean>(false);
+  const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  const showToast = (message: string, type: "success" | "info" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((prev) => (prev?.message === message ? null : prev));
+    }, 4500);
+  };
+
+  const handleOpenLogoutConfirm = () => {
+    setIsLogoutConfirmOpen(true);
+  };
+
+  const handleConfirmLogout = async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+
+    const token = getAuthToken();
+
+    try {
+      if (token) {
+        await apiFetch("/api/auth/logout", {
+          method: "POST"
+        });
+      }
+    } catch {
+      // Ignore network errors on logout
+    } finally {
+      clearAuthData();
+      setCurrentUser(null);
+      setAuthModalOpen(false);
+      setIsLogoutConfirmOpen(false);
+      setIsLoggingOut(false);
+      setActiveTab("home");
+      showToast("Вы вышли из аккаунта.", "success");
+    }
+  };
 
   // Home data states
   const [trending, setTrending] = useState<MediaItem[]>([]);
@@ -65,7 +111,7 @@ export default function App() {
     });
   };
 
-  // Fetch homepage & schedule data (passes Authorization token via apiFetch)
+  // Fetch homepage & schedule data
   const loadHomeData = async () => {
     setHomeLoading(true);
     try {
@@ -94,7 +140,7 @@ export default function App() {
     loadHomeData();
   }, [currentUser]);
 
-  // Validate session with server on initial application startup and sync user watchlist
+  // Validate session with server on initial application startup
   useEffect(() => {
     const initAuthAndSync = async () => {
       const token = getAuthToken();
@@ -117,7 +163,7 @@ export default function App() {
             setCurrentUser(null);
           }
         } catch (e) {
-          console.error("Auth verification failed", e);
+          console.error("Auth initialization failed:", e);
         }
       }
     };
@@ -152,8 +198,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-red-600 selection:text-white relative">
-      {/* Static side-margin character art background */}
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-red-600 selection:text-white relative pb-20 lg:pb-0 overflow-x-hidden">
+      {/* Static side-margin character background */}
       <SideCharacterRails />
 
       {/* Navigation Header */}
@@ -168,17 +214,20 @@ export default function App() {
           setAuthModalMode(currentUser ? "profile" : "login");
           setAuthModalOpen(true);
         }}
+        onLogoutClick={handleOpenLogoutConfirm}
+        isMobileSearchOpen={isMobileSearchOpen}
+        setIsMobileSearchOpen={setIsMobileSearchOpen}
       />
 
       {/* Main Content Area */}
-      <main className="flex-grow">
+      <main className="flex-grow w-full overflow-x-hidden">
         {/* TAB 1: HOME */}
         {activeTab === "home" && (
-          <div className="max-w-7xl mx-auto px-4 pb-12">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 space-y-8">
             {homeLoading ? (
               <div className="py-24 text-center flex flex-col items-center space-y-4">
                 <RefreshCw className="w-10 h-10 text-red-500 animate-spin" />
-                <p className="text-sm font-semibold text-zinc-400">
+                <p className="text-xs sm:text-sm font-semibold text-zinc-400">
                   Загрузка каталогов и расписания аниме...
                 </p>
               </div>
@@ -199,24 +248,27 @@ export default function App() {
                 />
 
                 {/* Recently Viewed Section */}
-                <RecentlyViewedSection onSelectMedia={handleSelectMedia} />
+                <RecentlyViewedSection 
+                  onSelectMedia={handleSelectMedia}
+                  onShowToast={showToast}
+                />
 
                 {/* Popular This Season */}
-                <section className="my-10">
-                  <div className="flex items-center justify-between mb-5">
+                <section className="my-6 md:my-8">
+                  <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center space-x-2">
-                      <Flame className="w-5 h-5 text-red-500" />
-                      <h2 className="text-xl font-bold text-white">Популярное в этом сезоне</h2>
+                      <Flame className="w-5 h-5 text-red-500 shrink-0" />
+                      <h2 className="text-base sm:text-lg md:text-xl font-black text-white tracking-tight">Популярное в этом сезоне</h2>
                     </div>
                     <button 
                       onClick={() => setActiveTab("anime")}
-                      className="text-xs font-semibold text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors"
+                      className="text-xs font-bold text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors cursor-pointer min-h-[40px] px-2 shrink-0"
                     >
-                      Смотреть все <ChevronRight className="w-3.5 h-3.5" />
+                      Смотреть все <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-3 sm:gap-4">
                     {popularThisSeason.slice(0, 12).map((media) => (
                       <MediaCard key={media.id} media={media} onClick={handleSelectMedia} />
                     ))}
@@ -224,22 +276,22 @@ export default function App() {
                 </section>
 
                 {/* Popular Manga */}
-                <section className="my-10">
-                  <div className="flex items-center justify-between mb-5">
+                <section className="my-6 md:my-8">
+                  <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center space-x-2">
-                      <BookOpen className="w-5 h-5 text-red-500" />
-                      <h2 className="text-xl font-bold text-white">Популярная Манга 🇯🇵</h2>
+                      <BookOpen className="w-5 h-5 text-red-500 shrink-0" />
+                      <h2 className="text-base sm:text-lg md:text-xl font-black text-white tracking-tight">Популярная Манга 🇯🇵</h2>
                     </div>
                     <button 
                       onClick={() => setActiveTab("manga")}
-                      className="text-xs font-semibold text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors cursor-pointer"
+                      className="text-xs font-bold text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors cursor-pointer min-h-[40px] px-2 shrink-0"
                     >
-                      Весь каталог манги <ChevronRight className="w-3.5 h-3.5" />
+                      Весь каталог <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                    {popularManga.slice(0, 6).map((media) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-3 sm:gap-4">
+                    {popularManga.slice(0, 8).map((media) => (
                       <MediaCard key={media.id} media={media} onClick={handleSelectMedia} />
                     ))}
                   </div>
@@ -247,22 +299,22 @@ export default function App() {
 
                 {/* Popular Manhwa */}
                 {popularManhwa.length > 0 && (
-                  <section className="my-10">
-                    <div className="flex items-center justify-between mb-5">
+                  <section className="my-6 md:my-8">
+                    <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center space-x-2">
-                        <BookOpen className="w-5 h-5 text-amber-500" />
-                        <h2 className="text-xl font-bold text-white">Популярная Манхва (Корея) 🇰🇷</h2>
+                        <BookOpen className="w-5 h-5 text-amber-500 shrink-0" />
+                        <h2 className="text-base sm:text-lg md:text-xl font-black text-white tracking-tight">Популярная Манхва (Корея) 🇰🇷</h2>
                       </div>
                       <button 
                         onClick={() => setActiveTab("manhwa")}
-                        className="text-xs font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-colors cursor-pointer"
+                        className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-colors cursor-pointer min-h-[40px] px-2 shrink-0"
                       >
-                        Каталог манхвы <ChevronRight className="w-3.5 h-3.5" />
+                        Каталог манхвы <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                      {popularManhwa.slice(0, 6).map((media) => (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-3 sm:gap-4">
+                      {popularManhwa.slice(0, 8).map((media) => (
                         <MediaCard key={media.id} media={media} onClick={handleSelectMedia} />
                       ))}
                     </div>
@@ -270,16 +322,16 @@ export default function App() {
                 )}
 
                 {/* Top Rated Anime */}
-                <section className="my-10">
-                  <div className="flex items-center justify-between mb-5">
+                <section className="my-6 md:my-8">
+                  <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center space-x-2">
-                      <Star className="w-5 h-5 text-amber-500" />
-                      <h2 className="text-xl font-bold text-white">Высокий рейтинг зрителей</h2>
+                      <Star className="w-5 h-5 text-amber-500 shrink-0" />
+                      <h2 className="text-base sm:text-lg md:text-xl font-black text-white tracking-tight">Высокий рейтинг зрителей</h2>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                    {topRated.slice(0, 6).map((media) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-3 sm:gap-4">
+                    {topRated.slice(0, 8).map((media) => (
                       <MediaCard key={media.id} media={media} onClick={handleSelectMedia} />
                     ))}
                   </div>
@@ -360,14 +412,15 @@ export default function App() {
               onUpdateUser={setCurrentUser} 
               onSelectMedia={handleSelectMedia}
               onNavigateTab={(tab) => setActiveTab(tab)}
+              onLogoutClick={handleOpenLogoutConfirm}
             />
           ) : (
-            <div className="max-w-md mx-auto my-16 p-8 bg-zinc-900 border border-zinc-800 rounded-3xl text-center space-y-4">
+            <div className="max-w-md mx-auto my-16 p-8 bg-zinc-900 border border-zinc-800 rounded-3xl text-center space-y-4 shadow-2xl">
               <h2 className="text-xl font-bold text-white">Авторизация в профиле</h2>
               <p className="text-xs text-zinc-400">Войдите или зарегистрируйтесь, чтобы получить доступ к вашему личному кабинету</p>
               <button
                 onClick={() => setAuthModalOpen(true)}
-                className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition-all shadow-lg cursor-pointer"
+                className="w-full py-3.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition-all shadow-lg cursor-pointer min-h-[48px]"
               >
                 Войти в аккаунт
               </button>
@@ -378,6 +431,19 @@ export default function App() {
 
       {/* Footer */}
       <Footer />
+
+      {/* Mobile Bottom Navigation */}
+      <BottomNav
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        currentUser={currentUser}
+        onOpenAuth={() => {
+          setAuthModalMessage(undefined);
+          setAuthModalMode("login");
+          setAuthModalOpen(true);
+        }}
+        onOpenSearch={() => setIsMobileSearchOpen(true)}
+      />
 
       {/* Media Detail Modal */}
       {selectedMediaId && (
@@ -401,8 +467,25 @@ export default function App() {
         onClose={() => setAuthModalOpen(false)}
         currentUser={currentUser}
         onUserChanged={handleUserChanged}
+        onLogoutClick={handleOpenLogoutConfirm}
         initialMode={authModalMode}
         message={authModalMessage}
+      />
+
+      {/* Logout Confirmation Modal */}
+      <LogoutConfirmModal 
+        isOpen={isLogoutConfirmOpen}
+        onClose={() => {
+          if (!isLoggingOut) setIsLogoutConfirmOpen(false);
+        }}
+        onConfirm={handleConfirmLogout}
+        isLoggingOut={isLoggingOut}
+      />
+
+      {/* Global Toast Notification */}
+      <Toast 
+        toast={toast}
+        onClose={() => setToast(null)}
       />
 
       {/* Lightbox Modal */}

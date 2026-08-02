@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Filter, Search, Grid, List, Sparkles, SlidersHorizontal, AlertCircle, RefreshCw, Lock, ShieldCheck, X } from "lucide-react";
+import { Filter, Search, Grid, List, Sparkles, SlidersHorizontal, RefreshCw, Lock, ShieldCheck, X } from "lucide-react";
 import { FilterState, MediaItem, MediaType, UserProfile } from "../types";
 import { GENRE_MAP_RU, FORMAT_MAP_RU, STATUS_MAP_RU } from "../utils/helpers";
 import { apiFetch } from "../utils/auth";
@@ -37,6 +37,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   const [countryFilter, setCountryFilter] = useState<"ALL" | "JP" | "KR" | "CN,TW">(
     initialCountryOfOrigin || (initialType === "MANGA" ? "JP" : "ALL")
   );
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
 
   useEffect(() => {
     setFilters(prev => ({ ...prev, type: initialType }));
@@ -94,448 +95,321 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   };
 
   useEffect(() => {
-    // If user is not adult-verified and isAdult filter is on, auto-reset it
     if ((!currentUser || !currentUser.isAdultVerified) && filters.isAdult) {
       setFilters(prev => ({ ...prev, isAdult: false }));
       return;
     }
     fetchCatalog(1, true);
-  }, [filters.type, filters.genres, filters.format, filters.status, filters.sort, filters.year, filters.isAdult, countryFilter, currentUser]);
+  }, [filters, countryFilter]);
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    fetchCatalog(1, true);
-  };
-
-  const handleToggleAdultFilter = (checked: boolean) => {
-    if (checked) {
-      if (!currentUser || !currentUser.isAdultVerified) {
+  const handleAdultToggle = (targetVal: boolean) => {
+    if (targetVal) {
+      if (!currentUser) {
+        onRequireAuthFor18Plus();
+        return;
+      }
+      if (!currentUser.isAdultVerified) {
         onRequireAuthFor18Plus();
         return;
       }
     }
-    setFilters(prev => ({ ...prev, isAdult: checked }));
-  };
-
-  const toggleGenre = (genreKey: string) => {
-    const isHentai = genreKey === "Hentai";
-    if (isHentai && (!currentUser || !currentUser.isAdultVerified)) {
-      onRequireAuthFor18Plus();
-      return;
-    }
-
-    setFilters((prev) => {
-      const exists = prev.genres.includes(genreKey);
-      return {
-        ...prev,
-        genres: exists ? [] : [genreKey],
-        isAdult: isHentai ? !exists : prev.isAdult
-      };
-    });
+    setFilters(prev => ({ ...prev, isAdult: targetVal }));
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      {/* Type Switch Header */}
-      <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-8 border-b border-zinc-800 pb-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {/* Title & Top Controls Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-zinc-900/60 p-4 sm:p-6 rounded-3xl border border-zinc-800/80">
         <div>
-          <h1 className="text-3xl font-black text-white flex items-center gap-3">
-            <Sparkles className="w-8 h-8 text-red-500" />
-            {filters.type === "ANIME"
-              ? "Каталог Аниме"
-              : countryFilter === "JP"
-              ? "Каталог Манги (Япония 🇯🇵)"
-              : countryFilter === "KR"
-              ? "Каталог Манхвы (Корея 🇰🇷)"
-              : countryFilter === "CN,TW"
-              ? "Каталог Маньхуа (Китай 🇨🇳)"
-              : "Каталог Манги, Манхвы и Маньхуа"}
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-white tracking-tight flex items-center gap-2">
+            <Sparkles className="w-6 h-6 text-red-500" />
+            Каталог {filters.type === "ANIME" ? "Аниме" : "Манги"}
           </h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            {filters.type === "ANIME"
-              ? "Полная база аниме-сериалов, фильмов, спешлов и OVA с фильтрацией по жанрам и годам"
-              : countryFilter === "KR"
-              ? "Корейские вебтуны и манхва с отслеживанием прочитанных глав и удобной сортировкой"
-              : countryFilter === "CN,TW"
-              ? "Китайские маньхуа и комиксы культивации с информацией о главах и авторах"
-              : "Японская манга, корейская манхва и китайская маньхуа в едином каталоге"}
+          <p className="text-xs sm:text-sm text-zinc-400 mt-1">
+            Найдено лучших тайтлов по вашим параметрам
           </p>
         </div>
 
-        {/* Category Switch Button Group */}
-        <div className="flex flex-wrap items-center bg-zinc-900 border border-zinc-800 p-1 rounded-xl gap-1">
-          <button 
-            onClick={() => {
-              setFilters((prev) => ({ ...prev, type: "ANIME", genres: [] }));
-              setCountryFilter("ALL");
-            }}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all min-h-[36px] cursor-pointer ${
-              filters.type === "ANIME" ? "bg-red-600 text-white shadow-md" : "text-zinc-400 hover:text-white"
-            }`}
+        {/* Action Controls (Mobile Filter Trigger & Grid/List Toggle) */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsFilterModalOpen(true)}
+            className="lg:hidden flex-1 sm:flex-initial min-h-[48px] px-4 py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg cursor-pointer"
           >
-            АНИМЕ
+            <SlidersHorizontal className="w-4 h-4" />
+            <span>Фильтры {filters.genres.length > 0 && `(${filters.genres.length})`}</span>
           </button>
-          <button 
-            onClick={() => {
-              setFilters((prev) => ({ ...prev, type: "MANGA", genres: [] }));
-              setCountryFilter("JP");
-            }}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all min-h-[36px] cursor-pointer ${
-              filters.type === "MANGA" && countryFilter === "JP" ? "bg-red-600 text-white shadow-md" : "text-zinc-400 hover:text-white"
-            }`}
-          >
-            🇯🇵 МАНГА
-          </button>
-          <button 
-            onClick={() => {
-              setFilters((prev) => ({ ...prev, type: "MANGA", genres: [] }));
-              setCountryFilter("KR");
-            }}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all min-h-[36px] cursor-pointer ${
-              filters.type === "MANGA" && countryFilter === "KR" ? "bg-red-600 text-white shadow-md" : "text-zinc-400 hover:text-white"
-            }`}
-          >
-            🇰🇷 МАНХВА
-          </button>
-          <button 
-            onClick={() => {
-              setFilters((prev) => ({ ...prev, type: "MANGA", genres: [] }));
-              setCountryFilter("CN,TW");
-            }}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all min-h-[36px] cursor-pointer ${
-              filters.type === "MANGA" && countryFilter === "CN,TW" ? "bg-red-600 text-white shadow-md" : "text-zinc-400 hover:text-white"
-            }`}
-          >
-            🇨🇳 МАНЬХУА
-          </button>
+
+          <div className="hidden sm:flex items-center bg-zinc-950 p-1 rounded-2xl border border-zinc-800">
+            <button
+              onClick={() => setLayoutMode("grid")}
+              className={`p-2.5 rounded-xl transition-all cursor-pointer ${layoutMode === "grid" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"}`}
+              title="Сетка"
+            >
+              <Grid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setLayoutMode("list")}
+              className={`p-2.5 rounded-xl transition-all cursor-pointer ${layoutMode === "list" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"}`}
+              title="Список"
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Filter Controls Bar */}
-      <div className="bg-zinc-900/80 border border-zinc-800/80 rounded-2xl p-5 mb-8 backdrop-blur-md">
-        <form onSubmit={handleSearchSubmit} className="flex flex-col lg:flex-row items-center gap-4 mb-5">
-          {/* Search Bar */}
-          <div className="relative flex-1 w-full flex items-center">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 pointer-events-none z-10" />
-            <input 
-              type="text"
-              placeholder={filters.type === "ANIME" ? "Поиск аниме по названию (RU, EN, JP)..." : "Поиск манги, манхвы, маньхуа по названию..."}
-              value={filters.search}
-              onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
-              className="w-full bg-zinc-950 text-sm text-white pl-10 pr-10 py-2.5 rounded-xl border border-zinc-800 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-colors placeholder:text-zinc-500 font-medium selection:bg-red-600 selection:text-white caret-red-500"
-              style={{ color: "#ffffff", backgroundColor: "#09090b" }}
-            />
-            {filters.search && (
-              <button
-                type="button"
-                onClick={() => setFilters((prev) => ({ ...prev, search: "" }))}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors cursor-pointer z-10"
-                title="Очистить поиск"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-
-          <button 
-            type="submit"
-            className="w-full lg:w-auto px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition-colors flex items-center justify-center gap-2"
-          >
-            <Search className="w-4 h-4" /> Найти
-          </button>
-        </form>
-
-        {/* Dropdowns Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 text-xs">
-          {/* Format */}
-          <div>
-            <label className="block text-zinc-400 mb-1 font-medium">Формат</label>
-            <select 
-              value={filters.format || ""}
-              onChange={(e) => setFilters((prev) => ({ ...prev, format: e.target.value || undefined }))}
-              className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-lg p-2 focus:outline-none focus:border-red-500"
-            >
-              <option value="">Все форматы</option>
-              {Object.entries(FORMAT_MAP_RU).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Status */}
-          <div>
-            <label className="block text-zinc-400 mb-1 font-medium">Статус</label>
-            <select 
-              value={filters.status || ""}
-              onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value || undefined }))}
-              className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-lg p-2 focus:outline-none focus:border-red-500"
-            >
-              <option value="">Любой статус</option>
-              {Object.entries(STATUS_MAP_RU).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Sorting */}
-          <div>
-            <label className="block text-zinc-400 mb-1 font-medium">Сортировка</label>
-            <select 
-              value={filters.sort}
-              onChange={(e) => setFilters((prev) => ({ ...prev, sort: e.target.value as any }))}
-              className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-lg p-2 focus:outline-none focus:border-red-500 font-medium"
-            >
-              <option value="POPULARITY_DESC">🔥 Самые популярные (Most Popular)</option>
-              <option value="SCORE_DESC">⭐ Наивысший рейтинг (Highest Rated)</option>
-              <option value="START_DATE_DESC">🆕 Новинки (Newest / Release Date)</option>
-              <option value="TITLE_ROMAJI">🔤 По алфавиту (Alphabetical A-Z)</option>
-              <option value="TRENDING_DESC">📈 В тренде сейчас (Trending Now)</option>
-              <option value="FAVOURITES_DESC">❤️ Больше всего в избранном (Most Favorited)</option>
-              <option value="CHAPTERS_DESC">📖 По количеству глав (Most Chapters)</option>
-              <option value="UPDATED_AT_DESC">🔄 Недавно обновленные (Recently Updated)</option>
-            </select>
-          </div>
-
-          {/* Year */}
-          <div>
-            <label className="block text-zinc-400 mb-1 font-medium">Год</label>
-            <select 
-              value={filters.year || ""}
-              onChange={(e) => setFilters((prev) => ({ ...prev, year: e.target.value ? parseInt(e.target.value, 10) : undefined }))}
-              className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-lg p-2 focus:outline-none focus:border-red-500"
-            >
-              <option value="">Все года</option>
-              {Array.from({ length: 25 }, (_, i) => 2026 - i).map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Age Rating / 18+ */}
-          <div className="flex flex-col justify-end">
-            <label 
-              onClick={(e) => {
-                if (!currentUser || !currentUser.isAdultVerified) {
-                  e.preventDefault();
-                  onRequireAuthFor18Plus();
-                }
-              }}
-              className={`flex items-center justify-between cursor-pointer py-2 px-3 border rounded-lg transition-all ${
-                filters.isAdult 
-                  ? "bg-red-950/40 border-red-500 text-white font-bold" 
-                  : "bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700"
-              }`}
-            >
-              <div className="flex items-center space-x-2">
-                <input 
-                  type="checkbox"
-                  checked={filters.isAdult}
-                  onChange={(e) => handleToggleAdultFilter(e.target.checked)}
-                  className="accent-red-600 rounded cursor-pointer"
-                />
-                <span className="font-semibold text-xs">Контент 18+</span>
-              </div>
-              {(!currentUser || !currentUser.isAdultVerified) && (
-                <Lock className="w-3.5 h-3.5 text-zinc-500" />
-              )}
-            </label>
-          </div>
-        </div>
-
-        {/* Category Tabs for Manga section */}
+      {/* DESKTOP FILTER BAR */}
+      <div className="hidden lg:block bg-zinc-900/60 border border-zinc-800/80 p-5 rounded-3xl space-y-4">
+        {/* Country Tabs (if MANGA) */}
         {filters.type === "MANGA" && (
-          <div className="mt-4 pt-4 border-t border-zinc-800/80">
-            <span className="text-xs font-semibold text-zinc-400 block mb-2">Формат и страна происхождения:</span>
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 border-b border-zinc-800/60 pb-4">
+            <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider mr-2">Регион:</span>
+            {[
+              { id: "ALL", label: "Все" },
+              { id: "JP", label: "Манга 🇯🇵" },
+              { id: "KR", label: "Манхва 🇰🇷" },
+              { id: "CN,TW", label: "Маньхуа 🇨🇳" },
+            ].map((c) => (
               <button
-                type="button"
-                onClick={() => setCountryFilter("ALL")}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all min-h-[36px] cursor-pointer ${
-                  countryFilter === "ALL" 
-                    ? "bg-red-600 text-white shadow-md shadow-red-950/40" 
-                    : "bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800 hover:bg-zinc-800"
+                key={c.id}
+                onClick={() => setCountryFilter(c.id as any)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  countryFilter === c.id
+                    ? "bg-red-600 text-white shadow-md shadow-red-950/40"
+                    : "bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800"
                 }`}
               >
-                📚 Все типы (Манга, Манхва, Маньхуа)
+                {c.label}
               </button>
-              <button
-                type="button"
-                onClick={() => setCountryFilter("JP")}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all min-h-[36px] cursor-pointer ${
-                  countryFilter === "JP" 
-                    ? "bg-red-600 text-white shadow-md shadow-red-950/40" 
-                    : "bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800 hover:bg-zinc-800"
-                }`}
-              >
-                🇯🇵 Манга (Япония)
-              </button>
-              <button
-                type="button"
-                onClick={() => setCountryFilter("KR")}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all min-h-[36px] cursor-pointer ${
-                  countryFilter === "KR" 
-                    ? "bg-red-600 text-white shadow-md shadow-red-950/40" 
-                    : "bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800 hover:bg-zinc-800"
-                }`}
-              >
-                🇰🇷 Манхва (Корея)
-              </button>
-              <button
-                type="button"
-                onClick={() => setCountryFilter("CN,TW")}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all min-h-[36px] cursor-pointer ${
-                  countryFilter === "CN,TW" 
-                    ? "bg-red-600 text-white shadow-md shadow-red-950/40" 
-                    : "bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800 hover:bg-zinc-800"
-                }`}
-              >
-                🇨🇳 Маньхуа (Китай)
-              </button>
-            </div>
+            ))}
           </div>
         )}
 
-        {/* Quick Sorting Pills */}
-        <div className="mt-4 pt-4 border-t border-zinc-800/80">
-          <span className="text-xs font-semibold text-zinc-400 block mb-2">Быстрый порядок сортировки:</span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {[
-              { id: 'POPULARITY_DESC', label: '🔥 По популярности' },
-              { id: 'SCORE_DESC', label: '⭐ По рейтингу' },
-              { id: 'START_DATE_DESC', label: '🆕 Новинки' },
-              { id: 'TITLE_ROMAJI', label: '🔤 По алфавиту (A-Z)' },
-              { id: 'TRENDING_DESC', label: '📈 В тренде' },
-              { id: 'FAVOURITES_DESC', label: '❤️ В избранном' },
-              { id: 'CHAPTERS_DESC', label: '📖 Больше глав' },
-              { id: 'UPDATED_AT_DESC', label: '🔄 Обновлено' },
-            ].map((sortOption) => {
-              const isActive = filters.sort === sortOption.id;
-              return (
-                <button
-                  key={sortOption.id}
-                  type="button"
-                  onClick={() => setFilters((prev) => ({ ...prev, sort: sortOption.id as any }))}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-zinc-100 text-zinc-950 font-black shadow-md border border-white'
-                      : 'bg-zinc-950 text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800'
-                  }`}
-                >
-                  {sortOption.label}
-                </button>
-              );
-            })}
+        <div className="grid grid-cols-12 gap-3 items-center">
+          {/* Search Input */}
+          <div className="col-span-4 relative">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Поиск по названию..."
+              value={filters.search}
+              onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+              className="w-full bg-zinc-950 text-xs text-white pl-10 pr-4 py-2.5 rounded-xl border border-zinc-800 focus:outline-none focus:border-red-500 font-medium"
+            />
           </div>
-        </div>
 
-        {/* Genre Chips */}
-        <div className="mt-4 pt-4 border-t border-zinc-800/80">
-          <span className="text-xs font-semibold text-zinc-400 block mb-2">Быстрый выбор жанра:</span>
-          <div className="flex flex-wrap gap-1.5">
-            {Object.entries(GENRE_MAP_RU).map(([key, labelRu]) => {
-              const isSelected = filters.genres.includes(key);
-              return (
-                <button 
-                  key={key}
-                  onClick={() => toggleGenre(key)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                    isSelected 
-                      ? "bg-red-600 text-white font-bold shadow-md" 
-                      : "bg-zinc-950 text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800"
-                  }`}
-                >
-                  {labelRu}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Results Count & Layout Controls */}
-      <div className="flex items-center justify-between mb-6">
-        <span className="text-xs text-zinc-400 font-medium">
-          Найдено наименований: <strong className="text-white">{items.length}</strong>
-        </span>
-
-        <div className="flex items-center space-x-2">
-          <button 
-            onClick={() => setLayoutMode("grid")}
-            className={`p-2 rounded-lg border ${layoutMode === "grid" ? "bg-red-600 border-red-500 text-white" : "bg-zinc-900 border-zinc-800 text-zinc-400"}`}
-          >
-            <Grid className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={() => setLayoutMode("list")}
-            className={`p-2 rounded-lg border ${layoutMode === "list" ? "bg-red-600 border-red-500 text-white" : "bg-zinc-900 border-zinc-800 text-zinc-400"}`}
-          >
-            <List className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Items Display Grid / List */}
-      {items.length === 0 && !loading ? (
-        <div className="p-12 text-center bg-zinc-900/40 rounded-2xl border border-zinc-800 my-8">
-          <AlertCircle className="w-12 h-12 text-zinc-500 mx-auto mb-3" />
-          <h3 className="text-base font-semibold text-white">Ничего не найдено</h3>
-          <p className="text-xs text-zinc-400 mt-1">Попробуйте изменить параметры поиска или сбросить фильтры.</p>
-        </div>
-      ) : layoutMode === "grid" ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {items.map((media) => (
-            <MediaCard key={media.id} media={media} onClick={onSelectMedia} />
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-col space-y-3">
-          {items.map((media) => (
-            <div 
-              key={media.id}
-              onClick={() => onSelectMedia(media)}
-              className="flex items-center p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 hover:border-red-500/50 transition-all cursor-pointer group"
+          {/* Genre Select */}
+          <div className="col-span-3">
+            <select
+              value={filters.genres[0] || ""}
+              onChange={(e) => setFilters(prev => ({ ...prev, genres: e.target.value ? [e.target.value] : [] }))}
+              className="w-full bg-zinc-950 text-xs text-white px-3 py-2.5 rounded-xl border border-zinc-800 focus:outline-none focus:border-red-500 font-medium cursor-pointer"
             >
-              <img 
-                src={media.coverImage?.medium} 
-                alt={media.title.romaji} 
-                className="w-14 h-20 object-cover rounded-lg flex-shrink-0 bg-zinc-950"
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=300&q=80";
-                }}
-              />
-              <div className="ml-4 flex-1 min-w-0">
-                <h4 className="font-bold text-sm text-white group-hover:text-red-400 transition-colors">
-                  {media.title.russian || media.title.romaji}
-                </h4>
-                <p className="text-xs text-zinc-400 line-clamp-1 mt-0.5">
-                  {media.description?.replace(/<[^>]*>?/gm, '')}
-                </p>
-                <div className="flex items-center gap-3 text-[11px] text-zinc-500 mt-2">
-                  <span>{FORMAT_MAP_RU[media.format] || media.format}</span>
-                  <span>•</span>
-                  <span>Оценка: {media.averageScore ? (media.averageScore / 10).toFixed(1) : "—"}</span>
+              <option value="">Все жанры</option>
+              {Object.entries(GENRE_MAP_RU).map(([en, ru]) => (
+                <option key={en} value={en}>{ru}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Sort Select */}
+          <div className="col-span-3">
+            <select
+              value={filters.sort}
+              onChange={(e) => setFilters(prev => ({ ...prev, sort: e.target.value as any }))}
+              className="w-full bg-zinc-950 text-xs text-white px-3 py-2.5 rounded-xl border border-zinc-800 focus:outline-none focus:border-red-500 font-medium cursor-pointer"
+            >
+              <option value="POPULARITY_DESC">По популярности</option>
+              <option value="SCORE_DESC">По рейтингу</option>
+              <option value="TRENDING_DESC">В тренде</option>
+              <option value="START_DATE_DESC">По дате выхода</option>
+            </select>
+          </div>
+
+          {/* 18+ Toggle */}
+          <div className="col-span-2 flex items-center justify-end">
+            <button
+              onClick={() => handleAdultToggle(!filters.isAdult)}
+              className={`w-full min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border cursor-pointer ${
+                filters.isAdult
+                  ? "bg-red-600 border-red-500 text-white shadow-md shadow-red-950/50"
+                  : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white"
+              }`}
+            >
+              {filters.isAdult ? <ShieldCheck className="w-4 h-4" /> : <Lock className="w-4 h-4 text-amber-500" />}
+              <span>{filters.isAdult ? "18+ Вкл" : "18+ Выкл"}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* MOBILE / TABLET FILTER MODAL / BOTTOM SHEET */}
+      {isFilterModalOpen && (
+        <div className="fixed inset-0 z-50 bg-zinc-950/98 backdrop-blur-2xl flex flex-col justify-between p-4 sm:p-6 overflow-y-auto animate-in slide-in-from-bottom duration-300">
+          <div className="space-y-6 max-w-lg mx-auto w-full">
+            <div className="flex items-center justify-between border-b border-zinc-800/80 pb-4">
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <SlidersHorizontal className="w-5 h-5 text-red-500" />
+                Фильтры каталога
+              </h3>
+              <button
+                onClick={() => setIsFilterModalOpen(false)}
+                className="p-2 rounded-xl bg-zinc-900 text-zinc-400 hover:text-white"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Region Filter if MANGA */}
+            {filters.type === "MANGA" && (
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Регион происхождения</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: "ALL", label: "Все" },
+                    { id: "JP", label: "Манга 🇯🇵" },
+                    { id: "KR", label: "Манхва 🇰🇷" },
+                    { id: "CN,TW", label: "Маньхуа 🇨🇳" },
+                  ].map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => setCountryFilter(c.id as any)}
+                      className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+                        countryFilter === c.id
+                          ? "bg-red-600 text-white shadow"
+                          : "bg-zinc-900 text-zinc-400 border border-zinc-800"
+                      }`}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
                 </div>
               </div>
+            )}
+
+            {/* Search Input */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Поиск</label>
+              <input
+                type="text"
+                placeholder="Введит название..."
+                value={filters.search}
+                onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                className="w-full bg-zinc-900 text-sm text-white px-4 py-3 rounded-xl border border-zinc-800 focus:outline-none focus:border-red-500 font-medium"
+              />
             </div>
-          ))}
+
+            {/* Genre Select */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Жанр</label>
+              <select
+                value={filters.genres[0] || ""}
+                onChange={(e) => setFilters(prev => ({ ...prev, genres: e.target.value ? [e.target.value] : [] }))}
+                className="w-full bg-zinc-900 text-sm text-white px-4 py-3 rounded-xl border border-zinc-800 focus:outline-none focus:border-red-500 font-medium"
+              >
+                <option value="">Все жанры</option>
+                {Object.entries(GENRE_MAP_RU).map(([en, ru]) => (
+                  <option key={en} value={en}>{ru}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Sort Select */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Сортировка</label>
+              <select
+                value={filters.sort}
+                onChange={(e) => setFilters(prev => ({ ...prev, sort: e.target.value as any }))}
+                className="w-full bg-zinc-900 text-sm text-white px-4 py-3 rounded-xl border border-zinc-800 focus:outline-none focus:border-red-500 font-medium"
+              >
+                <option value="POPULARITY_DESC">По популярности</option>
+                <option value="SCORE_DESC">По рейтингу</option>
+                <option value="TRENDING_DESC">В тренде</option>
+                <option value="START_DATE_DESC">По дате выхода</option>
+              </select>
+            </div>
+
+            {/* 18+ Toggle */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Возрастной режим</label>
+              <button
+                onClick={() => handleAdultToggle(!filters.isAdult)}
+                className={`w-full min-h-[48px] px-4 py-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border ${
+                  filters.isAdult
+                    ? "bg-red-600 border-red-500 text-white shadow-md"
+                    : "bg-zinc-900 border-zinc-800 text-zinc-400"
+                }`}
+              >
+                {filters.isAdult ? <ShieldCheck className="w-5 h-5" /> : <Lock className="w-5 h-5 text-amber-500" />}
+                <span>{filters.isAdult ? "Включен контент 18+" : "Выключен контент 18+"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Sticky Bottom Apply Button */}
+          <div className="pt-6 pb-2 max-w-lg mx-auto w-full sticky bottom-0 bg-zinc-950">
+            <button
+              onClick={() => setIsFilterModalOpen(false)}
+              className="w-full min-h-[48px] py-3.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-black text-sm transition-all shadow-xl active:scale-95 cursor-pointer"
+            >
+              Применить фильтры
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Pagination Load More */}
-      {hasNextPage && (
-        <div className="mt-10 text-center">
-          <button 
+      {/* CATALOG MEDIA GRID */}
+      {loading && items.length === 0 ? (
+        <div className="py-24 text-center flex flex-col items-center justify-center space-y-3">
+          <RefreshCw className="w-8 h-8 text-red-500 animate-spin" />
+          <p className="text-xs font-semibold text-zinc-400">Загрузка каталога...</p>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="py-20 text-center bg-zinc-900/40 rounded-3xl border border-zinc-800/60 p-8 space-y-3">
+          <p className="font-bold text-white text-base">По данным критериям тайтлов не найдено</p>
+          <p className="text-xs text-zinc-400 max-w-md mx-auto">
+            Попробуйте сбросить некоторые фильтры или ввести другое название в строке поиска
+          </p>
+          <button
             onClick={() => {
-              fetchCatalog(page + 1, false);
+              setFilters({
+                search: "",
+                type: initialType,
+                genres: [],
+                tags: [],
+                sort: "POPULARITY_DESC",
+                isAdult: false
+              });
+              setCountryFilter("ALL");
             }}
-            disabled={loading}
-            className="px-8 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs border border-zinc-700 transition-all flex items-center justify-center gap-2 mx-auto disabled:opacity-50"
+            className="mt-2 min-h-[44px] px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white transition-all cursor-pointer"
           >
-            {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            Загрузить еще
+            Сбросить все фильтры
           </button>
         </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-3 sm:gap-4 md:gap-5">
+            {items.map((media) => (
+              <MediaCard key={media.id} media={media} onClick={onSelectMedia} />
+            ))}
+          </div>
+
+          {/* Pagination Load More Button */}
+          {hasNextPage && (
+            <div className="text-center pt-8">
+              <button
+                onClick={() => fetchCatalog(page + 1)}
+                disabled={loading}
+                className="min-h-[48px] px-8 py-3.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs sm:text-sm font-extrabold text-white transition-all hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer shadow-xl inline-flex items-center gap-2"
+              >
+                {loading && <RefreshCw className="w-4 h-4 animate-spin text-red-500" />}
+                <span>Загрузить ещё тайтлы</span>
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

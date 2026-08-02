@@ -18,13 +18,13 @@ export const AiringTodaySection: React.FC<AiringTodaySectionProps> = ({ schedule
   return (
     <section className="my-8">
       {/* Section Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div className="flex items-center space-x-2">
-          <div className="p-2 rounded-lg bg-red-600/20 text-red-500 border border-red-500/30">
+          <div className="p-2 rounded-lg bg-red-600/20 text-red-500 border border-red-500/30 shrink-0">
             <Clock className="w-5 h-5 animate-pulse" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
               График релиза серий
             </h2>
             <p className="text-xs text-zinc-400">Сегодняшние эпизоды с таймером обратного отсчета</p>
@@ -33,7 +33,7 @@ export const AiringTodaySection: React.FC<AiringTodaySectionProps> = ({ schedule
 
         <button 
           onClick={onOpenCalendar}
-          className="text-xs font-semibold text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-zinc-700"
+          className="text-xs font-semibold text-red-400 hover:text-red-300 flex items-center justify-center gap-1 transition-colors px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 min-h-[40px] shrink-0 self-start sm:self-auto"
         >
           <Calendar className="w-3.5 h-3.5" /> Календарь на неделю <ChevronRight className="w-3.5 h-3.5" />
         </button>

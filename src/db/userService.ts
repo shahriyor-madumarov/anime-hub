@@ -1,12 +1,9 @@
-import crypto from "crypto";
-import bcrypt from "bcryptjs";
 import { supabaseServer } from "./supabaseServer";
 
 export interface ServerUser {
   id: string;
   username: string;
   email: string;
-  passwordHash: string;
   dateOfBirth: string; // YYYY-MM-DD
   createdAt: string;
   avatarUrl?: string;
@@ -15,58 +12,11 @@ export interface ServerUser {
   backgroundBanner?: string;
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, 12);
-}
-
-export async function verifyPassword(
-  plainTextPassword: string,
-  storedHash: string
-): Promise<{ isValid: boolean; needsRehash: boolean }> {
-  if (!storedHash) return { isValid: false, needsRehash: false };
-
-  const isBcryptHash =
-    storedHash.startsWith("$2a$") ||
-    storedHash.startsWith("$2b$") ||
-    storedHash.startsWith("$2y$");
-
-  if (isBcryptHash) {
-    const isValid = await bcrypt.compare(plainTextPassword, storedHash);
-    return { isValid, needsRehash: false };
-  } else {
-    // Legacy plaintext password check
-    const isValid = plainTextPassword === storedHash;
-    return { isValid, needsRehash: isValid };
-  }
-}
-
-export async function updateUserPasswordHash(userId: string, newHash: string): Promise<boolean> {
-  try {
-    const { error } = await supabaseServer
-      .from("users")
-      .update({
-        password_hash: newHash,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", userId);
-
-    if (error) {
-      console.error("[UserService] Error updating user password hash:", error.message);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("[UserService] Exception in updateUserPasswordHash:", err);
-    return false;
-  }
-}
-
 export function mapDbUserToUser(row: any): ServerUser {
   return {
     id: row.id,
     username: row.username,
     email: row.email,
-    passwordHash: row.password_hash || "",
     dateOfBirth: row.date_of_birth ? new Date(row.date_of_birth).toISOString().split("T")[0] : "",
     createdAt: row.created_at || new Date().toISOString(),
     avatarUrl: row.avatar_url || "",
@@ -89,7 +39,7 @@ export async function findUserById(id: string): Promise<ServerUser | null> {
       return null;
     }
     return data ? mapDbUserToUser(data) : null;
-  } catch (err) {
+  } catch (err: any) {
     console.error("[UserService] Exception in findUserById:", err);
     return null;
   }
@@ -119,27 +69,25 @@ export async function ensureUserProfile(
   };
 
   if (!user) {
-    const { data, error } = await supabaseServer
-      .from("users")
-      .upsert({
-        ...insertPayload,
-        created_at: now,
-      })
-      .select("*")
-      .single();
+    try {
+      const { data, error } = await supabaseServer
+        .from("users")
+        .upsert({
+          ...insertPayload,
+          created_at: now,
+        })
+        .select("*")
+        .single();
 
-    if (error) {
-      console.error("[UserService] Error upserting user profile:", error.message);
-      return {
-        id: authUserId,
-        username: cleanUsername,
-        email: cleanEmail,
-        passwordHash: "",
-        dateOfBirth: insertPayload.date_of_birth,
-        createdAt: now,
-      };
+      if (error) {
+        console.error("[UserService] Error upserting user profile:", error.message);
+        throw new Error(error.message);
+      }
+      return mapDbUserToUser(data);
+    } catch (err: any) {
+      console.error("[UserService] Exception in ensureUserProfile:", err);
+      throw err;
     }
-    return mapDbUserToUser(data);
   }
 
   return user;
@@ -151,54 +99,130 @@ export async function signUpWithSupabase(userData: {
   password: string;
   dateOfBirth: string;
 }): Promise<{ token: string; user: ServerUser }> {
+  console.log("[REGISTER TRACE 3] Entering signUpWithSupabase()");
   const cleanUsername = userData.username.trim();
   const cleanEmail = userData.email.trim().toLowerCase();
+  console.log("[REGISTER TRACE 4] Email and Username:", { email: cleanEmail, username: cleanUsername });
 
-  const signUpRes: any = await supabaseServer.auth.signUp({
-    email: cleanEmail,
-    password: userData.password,
-    options: {
-      data: {
-        username: cleanUsername,
-        date_of_birth: userData.dateOfBirth,
+  console.log("[REGISTER TRACE 5] Before calling supabase.auth.signUp()");
+
+  let signUpRes: any;
+  try {
+    signUpRes = await supabaseServer.auth.signUp({
+      email: cleanEmail,
+      password: userData.password,
+      options: {
+        data: {
+          username: cleanUsername,
+          date_of_birth: userData.dateOfBirth,
+        },
       },
-    },
-  });
+    });
+    console.log("[REGISTER TRACE 6] Complete response from supabase.auth.signUp():", {
+      data: signUpRes?.data,
+      error: signUpRes?.error,
+    });
+  } catch (signUpException: any) {
+    console.error("[REGISTER TRACE 7] Exception thrown during supabase.auth.signUp():", {
+      message: signUpException?.message || String(signUpException),
+      code: signUpException?.code || signUpException?.status || null,
+      status: signUpException?.status || 500,
+      fullError: signUpException,
+      stack: signUpException?.stack,
+    });
+    throw signUpException;
+  }
 
   if (signUpRes?.error) {
-    const msg = typeof signUpRes.error === "string"
-      ? signUpRes.error
-      : (signUpRes.error.message || "Ошибка при регистрации в Supabase Auth");
-    console.error("[UserService] Supabase signUp error:", msg);
-    throw new Error(msg);
+    const sbErr = signUpRes.error;
+    let msg = "";
+    if (typeof sbErr === "string" && sbErr.trim() && sbErr.trim() !== "{}" && sbErr.trim() !== "[object Object]") {
+      msg = sbErr.trim();
+    } else if (sbErr && typeof sbErr === "object") {
+      if (typeof sbErr.message === "string" && sbErr.message.trim() && sbErr.message.trim() !== "{}" && sbErr.message.trim() !== "[object Object]") {
+        msg = sbErr.message.trim();
+      } else if (typeof sbErr.msg === "string" && sbErr.msg.trim() && sbErr.msg.trim() !== "{}" && sbErr.msg.trim() !== "[object Object]") {
+        msg = sbErr.msg.trim();
+      } else if (typeof sbErr.error_description === "string" && sbErr.error_description.trim()) {
+        msg = sbErr.error_description.trim();
+      }
+    }
+    if (!msg || msg === "{}" || msg === "[object Object]") {
+      msg = "Пользователь с такими данными уже существует или ошибка Supabase Auth";
+    }
+    const code = sbErr.code || sbErr.status || null;
+    const status = sbErr.status || 400;
+
+    console.error("[REGISTER TRACE 7] Supabase returned an error object:", {
+      message: msg,
+      code: code,
+      status: status,
+      fullError: sbErr,
+      stack: sbErr?.stack || new Error().stack,
+    });
+
+    const err: any = new Error(msg);
+    err.code = code;
+    err.status = status;
+    err.supabaseError = sbErr;
+    throw err;
   }
 
   if (!signUpRes?.data?.user) {
-    throw new Error("Не удалось зарегистрировать пользователя");
+    const msg = "Не удалось зарегистрировать пользователя в Supabase Auth (user object empty)";
+    const err: any = new Error(msg);
+    err.status = 400;
+    console.error("[REGISTER TRACE 7] No user returned from Supabase Auth:", {
+      message: msg,
+      code: null,
+      status: 400,
+      fullError: err,
+      stack: err.stack,
+    });
+    throw err;
   }
 
   const authUser = signUpRes.data.user;
+  const session = signUpRes.data.session;
 
-  let token = signUpRes.data.session?.access_token;
-  if (!token) {
-    const { data: signInData, error: signInError } = await supabaseServer.auth.signInWithPassword({
-      email: cleanEmail,
-      password: userData.password,
+  if (!session || !session.access_token) {
+    const msg = "Регистрация успешна! Пожалуйста, подтвердите ваш email для входа.";
+    const err: any = new Error(msg);
+    err.status = 400;
+    err.code = "EMAIL_CONFIRMATION_REQUIRED";
+    console.error("[REGISTER TRACE 7] No session access_token (email confirmation required):", {
+      message: msg,
+      code: err.code,
+      status: 400,
+      fullError: err,
+      stack: err.stack,
     });
-    if (!signInError && signInData?.session) {
-      token = signInData.session.access_token;
-    }
+    throw err;
   }
 
-  const user = await ensureUserProfile(
-    authUser.id,
-    cleanEmail,
-    cleanUsername,
-    userData.dateOfBirth
-  );
+  const token = session.access_token;
+
+  let user: ServerUser;
+  try {
+    user = await ensureUserProfile(
+      authUser.id,
+      cleanEmail,
+      cleanUsername,
+      userData.dateOfBirth
+    );
+  } catch (profileErr: any) {
+    console.error("[REGISTER TRACE 7] Exception in ensureUserProfile:", {
+      message: profileErr?.message || String(profileErr),
+      code: profileErr?.code || null,
+      status: profileErr?.status || 500,
+      fullError: profileErr,
+      stack: profileErr?.stack,
+    });
+    throw profileErr;
+  }
 
   return {
-    token: token || `token_${authUser.id}`,
+    token,
     user,
   };
 }
@@ -271,15 +295,6 @@ export async function getUserByAuthToken(token: string): Promise<ServerUser | nu
       return user;
     }
 
-    // Support token format during transition
-    if (token.startsWith("token_")) {
-      const parts = token.split("_");
-      if (parts[1]) {
-        const user = await findUserById(parts[1]);
-        if (user) return user;
-      }
-    }
-
     return null;
   } catch (err) {
     console.error("[UserService] Exception in getUserByAuthToken:", err);
@@ -297,11 +312,12 @@ export async function signOutWithSupabase(token: string): Promise<void> {
 }
 
 export async function findUserByUsername(username: string): Promise<ServerUser | null> {
+  const clean = username.trim().toLowerCase();
   try {
     const { data, error } = await supabaseServer
       .from("users")
       .select("*")
-      .ilike("username", username.trim())
+      .ilike("username", clean)
       .maybeSingle();
 
     if (error) {
@@ -309,18 +325,19 @@ export async function findUserByUsername(username: string): Promise<ServerUser |
       return null;
     }
     return data ? mapDbUserToUser(data) : null;
-  } catch (err) {
+  } catch (err: any) {
     console.error("[UserService] Exception in findUserByUsername:", err);
     return null;
   }
 }
 
 export async function findUserByEmail(email: string): Promise<ServerUser | null> {
+  const clean = email.trim().toLowerCase();
   try {
     const { data, error } = await supabaseServer
       .from("users")
       .select("*")
-      .ilike("email", email.trim().toLowerCase())
+      .ilike("email", clean)
       .maybeSingle();
 
     if (error) {
@@ -328,7 +345,7 @@ export async function findUserByEmail(email: string): Promise<ServerUser | null>
       return null;
     }
     return data ? mapDbUserToUser(data) : null;
-  } catch (err) {
+  } catch (err: any) {
     console.error("[UserService] Exception in findUserByEmail:", err);
     return null;
   }
@@ -348,54 +365,9 @@ export async function findUserByLogin(login: string): Promise<ServerUser | null>
       return null;
     }
     return data ? mapDbUserToUser(data) : null;
-  } catch (err) {
+  } catch (err: any) {
     console.error("[UserService] Exception in findUserByLogin:", err);
     return null;
-  }
-}
-
-export async function createUser(userData: {
-  username: string;
-  email: string;
-  passwordHash: string;
-  dateOfBirth: string;
-}): Promise<ServerUser> {
-  const newId = crypto.randomUUID();
-  const now = new Date().toISOString();
-
-  const insertPayload = {
-    id: newId,
-    username: userData.username.trim(),
-    email: userData.email.trim().toLowerCase(),
-    password_hash: userData.passwordHash,
-    date_of_birth: userData.dateOfBirth,
-    created_at: now,
-    updated_at: now,
-  };
-
-  try {
-    const { data, error } = await supabaseServer
-      .from("users")
-      .insert(insertPayload)
-      .select("*")
-      .single();
-
-    if (error) {
-      console.error("[UserService] Error inserting new user to Supabase:", error.message);
-      throw new Error(`DB Error: ${error.message}`);
-    }
-
-    return mapDbUserToUser(data);
-  } catch (err) {
-    console.error("[UserService] Exception in createUser:", err);
-    return {
-      id: newId,
-      username: userData.username.trim(),
-      email: userData.email.trim().toLowerCase(),
-      passwordHash: userData.passwordHash,
-      dateOfBirth: userData.dateOfBirth,
-      createdAt: now,
-    };
   }
 }
 
@@ -433,7 +405,7 @@ export async function updateUserProfile(
       return null;
     }
     return data ? mapDbUserToUser(data) : null;
-  } catch (err) {
+  } catch (err: any) {
     console.error("[UserService] Exception in updateUserProfile:", err);
     return null;
   }
@@ -449,4 +421,35 @@ export async function getUserBySessionToken(token: string): Promise<ServerUser |
 
 export async function deleteSession(token: string): Promise<void> {
   return signOutWithSupabase(token);
+}
+
+export async function getUserStats(userId: string): Promise<{
+  favoriteCount: number;
+  watchlistCount: number;
+  commentCount: number;
+  ratingCount: number;
+}> {
+  try {
+    const [favs, watch, comms, rats] = await Promise.all([
+      supabaseServer.from("favorites").select("*", { count: "exact", head: true }).eq("user_id", userId),
+      supabaseServer.from("watchlist_items").select("*", { count: "exact", head: true }).eq("user_id", userId),
+      supabaseServer.from("comments").select("*", { count: "exact", head: true }).eq("user_id", userId),
+      supabaseServer.from("ratings").select("*", { count: "exact", head: true }).eq("user_id", userId),
+    ]);
+
+    return {
+      favoriteCount: favs.count || 0,
+      watchlistCount: watch.count || 0,
+      commentCount: comms.count || 0,
+      ratingCount: rats.count || 0,
+    };
+  } catch (err: any) {
+    console.error("[UserService] Exception in getUserStats:", err);
+    return {
+      favoriteCount: 0,
+      watchlistCount: 0,
+      commentCount: 0,
+      ratingCount: 0,
+    };
+  }
 }

@@ -458,16 +458,16 @@ export const MediaDetailModalPage: React.FC<MediaDetailModalPageProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="px-6 md:px-10 mt-10 border-b border-zinc-800 flex items-center space-x-6 text-sm font-bold overflow-x-auto">
+        <div className="px-6 md:px-10 mt-10 border-b border-zinc-800 flex items-center space-x-4 md:space-x-6 text-xs sm:text-sm font-bold overflow-x-auto no-scrollbar py-1">
           <button 
             onClick={() => setActiveTab("overview")}
-            className={`pb-3 transition-all ${activeTab === "overview" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
+            className={`pb-3 transition-all whitespace-nowrap shrink-0 min-h-[44px] flex items-center ${activeTab === "overview" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
           >
             Обзор
           </button>
           <button 
             onClick={() => setActiveTab("chapters")}
-            className={`pb-3 transition-all flex items-center gap-1.5 whitespace-nowrap ${activeTab === "chapters" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
+            className={`pb-3 transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 min-h-[44px] ${activeTab === "chapters" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
           >
             <BookOpen className="w-4 h-4 text-red-500" /> 
             <span>{media.type === 'MANGA' ? 'Главы и Чтение' : 'Серии и Просмотр'}</span>
@@ -479,27 +479,27 @@ export const MediaDetailModalPage: React.FC<MediaDetailModalPageProps> = ({
           </button>
           <button 
             onClick={() => setActiveTab("timeline")}
-            className={`pb-3 transition-all flex items-center gap-1.5 ${activeTab === "timeline" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
+            className={`pb-3 transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 min-h-[44px] ${activeTab === "timeline" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
           >
             <Layers className="w-4 h-4" /> Франшиза и Хронология ({relations.length})
           </button>
           <button 
             onClick={() => setActiveTab("characters")}
-            className={`pb-3 transition-all flex items-center gap-1.5 ${activeTab === "characters" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
+            className={`pb-3 transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 min-h-[44px] ${activeTab === "characters" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
           >
             <User className="w-4 h-4" /> Персонажи и Сэйю ({media.characters?.length || 0})
           </button>
           {media.trailer?.id && (
             <button 
               onClick={() => setActiveTab("trailer")}
-              className={`pb-3 transition-all flex items-center gap-1.5 ${activeTab === "trailer" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
+              className={`pb-3 transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 min-h-[44px] ${activeTab === "trailer" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
             >
               <Film className="w-4 h-4" /> Трейлер
             </button>
           )}
           <button 
             onClick={() => setActiveTab("reviews")}
-            className={`pb-3 transition-all flex items-center gap-1.5 ${activeTab === "reviews" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
+            className={`pb-3 transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 min-h-[44px] ${activeTab === "reviews" ? "text-red-500 border-b-2 border-red-500" : "text-zinc-400 hover:text-white"}`}
           >
             <MessageSquare className="w-4 h-4" /> Отзывы ({reviews.length})
           </button>

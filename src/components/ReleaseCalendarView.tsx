@@ -58,26 +58,26 @@ export const ReleaseCalendarView: React.FC<ReleaseCalendarViewProps> = ({ schedu
   });
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-2.5 sm:px-4 py-4 sm:py-8">
       {/* Title */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 sm:mb-8">
         <div>
-          <h1 className="text-3xl font-black text-white flex items-center gap-3">
-            <CalendarIcon className="w-8 h-8 text-red-500" />
-            Календарь релизов аниме
+          <h1 className="text-xl sm:text-3xl font-black text-white flex items-center gap-2.5 sm:gap-3">
+            <CalendarIcon className="w-6 h-6 sm:w-8 sm:h-8 text-red-500 shrink-0" />
+            <span>Календарь релизов аниме</span>
           </h1>
-          <p className="text-sm text-zinc-400 mt-1">
+          <p className="text-xs sm:text-sm text-zinc-400 mt-1">
             Расписание выхода новых серий на неделю с автоматическим пересчетом под ваше местное время
           </p>
         </div>
 
         {/* Genre Filter */}
-        <div className="flex items-center space-x-2 bg-zinc-900 border border-zinc-800 p-1.5 rounded-xl">
-          <Filter className="w-4 h-4 text-zinc-400 ml-2" />
+        <div className="flex items-center space-x-2 bg-zinc-900 border border-zinc-800 p-1.5 rounded-xl min-h-[44px]">
+          <Filter className="w-4 h-4 text-zinc-400 ml-2 shrink-0" />
           <select 
             value={selectedGenre}
             onChange={(e) => setSelectedGenre(e.target.value)}
-            className="bg-transparent text-xs text-white border-none focus:outline-none cursor-pointer py-1 pr-2"
+            className="bg-transparent text-xs text-white border-none focus:outline-none cursor-pointer py-1 pr-2 w-full"
           >
             <option value="ALL" className="bg-zinc-900 text-white">Все жанры</option>
             {Array.from(allGenresSet).map((g) => (
@@ -90,7 +90,7 @@ export const ReleaseCalendarView: React.FC<ReleaseCalendarViewProps> = ({ schedu
       </div>
 
       {/* Days Tabs Header */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-1.5 sm:gap-2 mb-6 sm:mb-8">
         {DAYS_OF_WEEK.map((day, idx) => {
           const count = (groupedByDay[day] || []).length;
           const isSelected = idx === selectedDayIndex;
@@ -99,14 +99,14 @@ export const ReleaseCalendarView: React.FC<ReleaseCalendarViewProps> = ({ schedu
             <button 
               key={day}
               onClick={() => setSelectedDayIndex(idx)}
-              className={`flex flex-col items-center justify-center py-3.5 px-2 rounded-xl border font-bold transition-all duration-200 ${
+              className={`min-h-[44px] flex flex-col items-center justify-center py-2 px-1 rounded-xl border font-bold transition-all duration-200 cursor-pointer ${
                 isSelected 
                   ? "bg-red-600 border-red-500 text-white shadow-lg shadow-red-950/50 scale-[1.02]" 
                   : "bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800/80"
               }`}
             >
               <span className="text-xs font-semibold">{day}</span>
-              <span className={`text-[11px] mt-1 px-2 py-0.5 rounded-full font-bold ${
+              <span className={`text-[10px] mt-0.5 px-2 py-0.5 rounded-full font-bold ${
                 isSelected ? "bg-white/20 text-white" : "bg-zinc-800 text-zinc-500"
               }`}>
                 {count} {count === 1 ? "релиз" : count > 1 && count < 5 ? "релиза" : "релизов"}

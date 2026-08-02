@@ -1,4 +1,4 @@
-import { supabaseServer } from "./supabaseServer";
+import { getSupabaseClient } from "./supabaseServer";
 
 function normalizeMediaType(typeStr?: string): "anime" | "manga" | "manhwa" {
   if (!typeStr) return "anime";
@@ -8,9 +8,10 @@ function normalizeMediaType(typeStr?: string): "anime" | "manga" | "manhwa" {
   return "anime";
 }
 
-export async function getUserRecentlyViewed(userId: string): Promise<any[]> {
+export async function getUserRecentlyViewed(userId: string, token?: string): Promise<any[]> {
   try {
-    const { data, error } = await supabaseServer
+    const client = getSupabaseClient(token);
+    const { data, error } = await client
       .from("recently_viewed")
       .select("media_data, viewed_at")
       .eq("user_id", userId)
@@ -28,21 +29,22 @@ export async function getUserRecentlyViewed(userId: string): Promise<any[]> {
       ...(row.media_data || {}),
       viewedAt: row.viewed_at,
     }));
-  } catch (err) {
+  } catch (err: any) {
     console.error("[RecentlyViewedService] Exception in getUserRecentlyViewed:", err);
     return [];
   }
 }
 
-export async function addRecentlyViewed(userId: string, media: any): Promise<any[]> {
-  if (!media || !media.id) return getUserRecentlyViewed(userId);
+export async function addRecentlyViewed(userId: string, media: any, token?: string): Promise<any[]> {
+  if (!media || !media.id) return getUserRecentlyViewed(userId, token);
 
   const mediaId = parseInt(media.id, 10);
   const mediaType = normalizeMediaType(media.type || media.mediaType);
   const now = new Date().toISOString();
 
   try {
-    const { error } = await supabaseServer
+    const client = getSupabaseClient(token);
+    const { error } = await client
       .from("recently_viewed")
       .upsert(
         {
@@ -59,25 +61,28 @@ export async function addRecentlyViewed(userId: string, media: any): Promise<any
     if (error) {
       console.error("[RecentlyViewedService] Error upserting recently viewed item:", error.message);
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error("[RecentlyViewedService] Exception in addRecentlyViewed:", err);
   }
 
-  return getUserRecentlyViewed(userId);
+  return getUserRecentlyViewed(userId, token);
 }
 
-export async function clearRecentlyViewed(userId: string): Promise<any[]> {
+export async function clearRecentlyViewed(userId: string, token?: string): Promise<any[]> {
   try {
-    const { error } = await supabaseServer
+    const client = getSupabaseClient(token);
+    const { error } = await client
       .from("recently_viewed")
       .delete()
       .eq("user_id", userId);
 
     if (error) {
       console.error("[RecentlyViewedService] Error clearing recently viewed:", error.message);
+      throw new Error(error.message);
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error("[RecentlyViewedService] Exception in clearRecentlyViewed:", err);
+    throw err;
   }
 
   return [];
@@ -86,9 +91,10 @@ export async function clearRecentlyViewed(userId: string): Promise<any[]> {
 export async function syncRecentlyViewed(
   userId: string,
   clientList: any[],
-  serverListFallback: any[] = []
+  serverListFallback: any[] = [],
+  token?: string
 ): Promise<any[]> {
-  const dbList = await getUserRecentlyViewed(userId);
+  const dbList = await getUserRecentlyViewed(userId, token);
   const baseList = dbList.length > 0 ? dbList : serverListFallback;
 
   const combinedRV: any[] = [];
@@ -104,10 +110,8 @@ export async function syncRecentlyViewed(
   const mergedRV = combinedRV.slice(0, 20);
 
   for (const item of mergedRV) {
-    await addRecentlyViewed(userId, item);
+    await addRecentlyViewed(userId, item, token);
   }
 
-  return getUserRecentlyViewed(userId);
+  return getUserRecentlyViewed(userId, token);
 }
-
-

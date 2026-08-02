@@ -9,6 +9,7 @@ interface AuthModalProps {
   onClose: () => void;
   currentUser: UserProfile | null;
   onUserChanged: (user: UserProfile | null) => void;
+  onLogoutClick?: () => void;
   initialMode?: "login" | "register" | "profile";
   message?: string;
 }
@@ -18,12 +19,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   currentUser,
   onUserChanged,
+  onLogoutClick,
   initialMode = "login",
   message
 }) => {
   const [mode, setMode] = useState<"login" | "register" | "profile">(
     currentUser ? "profile" : initialMode
   );
+
+  // Sync mode and form values when modal opens or user state changes
+  useEffect(() => {
+    if (isOpen) {
+      setMode(currentUser ? "profile" : initialMode);
+      setError(null);
+      setSuccessMsg(null);
+      if (currentUser) {
+        setEditUsername(currentUser.username || "");
+        setEditEmail(currentUser.email || "");
+      }
+    }
+  }, [isOpen, currentUser, initialMode]);
 
   // Form fields
   const [loginInput, setLoginInput] = useState("");
@@ -109,13 +124,67 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // Helper to safely extract error message from API response or thrown error
   const extractErrorMsg = (dataOrError: any, defaultMsg: string): string => {
     if (!dataOrError) return defaultMsg;
-    if (typeof dataOrError === "string" && dataOrError.trim()) return dataOrError;
-    if (typeof dataOrError.error === "string" && dataOrError.error.trim()) return dataOrError.error;
-    if (dataOrError.error && typeof dataOrError.error.message === "string" && dataOrError.error.message.trim()) {
-      return dataOrError.error.message;
+
+    const sanitize = (val: any): string | null => {
+      if (!val) return null;
+      if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (trimmed && trimmed !== "{}" && trimmed !== "[object Object]") {
+          return trimmed;
+        }
+        return null;
+      }
+      return null;
+    };
+
+    if (typeof dataOrError === "string") {
+      const clean = sanitize(dataOrError);
+      if (clean) return clean;
     }
-    if (typeof dataOrError.message === "string" && dataOrError.message.trim()) return dataOrError.message;
+
+    if (typeof dataOrError === "object") {
+      if (dataOrError.error) {
+        const cleanErr = sanitize(dataOrError.error);
+        if (cleanErr) return cleanErr;
+        if (typeof dataOrError.error === "object" && dataOrError.error.message) {
+          const cleanSubMsg = sanitize(dataOrError.error.message);
+          if (cleanSubMsg) return cleanSubMsg;
+        }
+      }
+      if (dataOrError.message) {
+        const cleanMsg = sanitize(dataOrError.message);
+        if (cleanMsg) return cleanMsg;
+      }
+    }
+
     return defaultMsg;
+  };
+
+  const formatAuthError = (msg: string, isRegister: boolean): string => {
+    if (!msg || msg === "{}" || msg === "[object Object]") return isRegister ? "Ошибка регистрации" : "Ошибка входа";
+    const lower = msg.toLowerCase();
+    if (isRegister) {
+      if (
+        lower.includes("already registered") ||
+        lower.includes("email_exists") ||
+        lower.includes("user_already_exists") ||
+        lower.includes("email address has already been registered") ||
+        lower.includes("этот email уже зарегистрирован")
+      ) {
+        return "Этот email уже зарегистрирован";
+      }
+      if (
+        lower.includes("username") ||
+        lower.includes("имя пользователя") ||
+        lower.includes("занято")
+      ) {
+        return "Это имя пользователя уже занято";
+      }
+      if (lower.includes("уже существует")) {
+        return "Этот email или имя пользователя уже зарегистрированы";
+      }
+    }
+    return msg;
   };
 
   // Handle Login
@@ -136,16 +205,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       saveAuthData(data.token, data.user);
       onUserChanged(data.user);
-      setSuccessMsg("Успешный вход!");
-      setTimeout(() => {
-        onClose();
-      }, 500);
+      onClose();
     } catch (err: any) {
+      let errMsg: string;
       if (err.name === "TypeError" && err.message?.includes("fetch")) {
-        setError("Не удалось связаться с сервером. Пожалуйста, проверьте интернет-соединение и повторите попытку.");
+        errMsg = "Не удалось связаться с сервером. Пожалуйста, проверьте интернет-соединение и повторите попытку.";
       } else {
-        setError(extractErrorMsg(err, "Ошибка входа"));
+        errMsg = extractErrorMsg(err, "Ошибка входа");
       }
+      setError(errMsg);
     } finally {
       setLoading(false);
     }
@@ -174,23 +242,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           dateOfBirth: isoDate
         })
       });
+
       const data = await res.json();
+
       if (!res.ok) {
         throw new Error(extractErrorMsg(data, "Ошибка регистрации"));
       }
 
       saveAuthData(data.token, data.user);
       onUserChanged(data.user);
-      setSuccessMsg("Аккаунт успешно создан!");
-      setTimeout(() => {
-        onClose();
-      }, 600);
+      onClose();
     } catch (err: any) {
+      let errMsg: string;
       if (err.name === "TypeError" && err.message?.includes("fetch")) {
-        setError("Не удалось связаться с сервером. Пожалуйста, проверьте подключение к сети и повторите попытку.");
+        errMsg = "Не удалось связаться с сервером. Пожалуйста, проверьте подключение к сети и повторите попытку.";
       } else {
-        setError(extractErrorMsg(err, "Ошибка регистрации"));
+        const rawMsg = extractErrorMsg(err, "Ошибка регистрации");
+        errMsg = formatAuthError(rawMsg, true);
       }
+      setError(errMsg);
     } finally {
       setLoading(false);
     }
@@ -213,7 +283,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Ошибка обновления профиля");
+        throw new Error(extractErrorMsg(data, "Ошибка обновления профиля"));
       }
 
       if (currentUser) {
@@ -229,17 +299,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setSuccessMsg("Профиль успешно обновлен");
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setError(err.message);
+      setError(extractErrorMsg(err, "Ошибка обновления профиля"));
     } finally {
       setLoading(false);
     }
   };
 
   const handleLogout = () => {
-    clearAuthData();
-    onUserChanged(null);
-    setMode("login");
     onClose();
+    if (onLogoutClick) {
+      onLogoutClick();
+    } else {
+      clearAuthData();
+      onUserChanged(null);
+      setMode("login");
+    }
   };
 
   return (

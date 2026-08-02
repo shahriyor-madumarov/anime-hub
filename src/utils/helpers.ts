@@ -246,18 +246,23 @@ export function addRecentlyViewed(media: any) {
   }
 }
 
-export function clearRecentlyViewed() {
+export async function clearRecentlyViewed(): Promise<void> {
   try {
     localStorage.removeItem(RECENTLY_VIEWED_KEY);
     notifyRecentlyViewedUpdated();
 
     if (getAuthToken()) {
-      apiFetch("/api/user/recently-viewed", {
+      const res = await apiFetch("/api/user/recently-viewed", {
         method: "DELETE"
-      }).catch((e) => console.error("Failed to clear recently viewed on server", e));
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Failed to clear history on server (${res.status})`);
+      }
     }
   } catch (e) {
     console.error("Failed to clear recently viewed list", e);
+    throw e;
   }
 }
 
