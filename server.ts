@@ -4,7 +4,6 @@ import fs from "fs";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import {
   ServerUser,
@@ -76,11 +75,26 @@ const allowedOrigins = allowedOriginsEnv
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
-        callback(null, true);
-      } else {
-        callback(new Error("CORS policy violation: Origin not allowed"));
+      // Allow requests with no origin (like same-origin, curl, mobile apps)
+      if (!origin) return callback(null, true);
+
+      // If wildcard is specified in ALLOWED_ORIGINS, allow all
+      if (allowedOrigins.includes("*")) return callback(null, true);
+
+      // Check explicit whitelist
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+
+      // Permit local development, Vercel deployments, and Cloud Run / AI Studio previews
+      const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+      const isVercel = /\.vercel\.app$/.test(origin);
+      const isRunApp = /\.run\.app$/.test(origin);
+
+      if (allowedOrigins.length === 0 || isLocalhost || isVercel || isRunApp) {
+        return callback(null, true);
       }
+
+      // Reject unauthorized origin gracefully without throwing an unhandled Error exception
+      return callback(null, false);
     },
     credentials: true,
   })
@@ -105,6 +119,14 @@ const aiLimiter = rateLimit({
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// Path normalization middleware for serverless routing (Vercel)
+app.use((req, res, next) => {
+  if (!req.url.startsWith("/api") && req.url !== "/favicon.ico") {
+    req.url = "/api" + (req.url.startsWith("/") ? "" : "/") + req.url;
+  }
+  next();
+});
 
 // Initialize Gemini Client safely
 let ai: GoogleGenAI | null = null;
@@ -1420,6 +1442,7 @@ app.post("/api/ai/recommend", aiLimiter, async (req, res) => {
 // Vite Middleware & Static Server integration
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1438,4 +1461,9 @@ async function startServer() {
   });
 }
 
-startServer();
+export default app;
+export { app };
+
+if (!process.env.VERCEL) {
+  startServer();
+}
