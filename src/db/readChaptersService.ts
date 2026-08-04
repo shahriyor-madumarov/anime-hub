@@ -1,4 +1,4 @@
-import { getSupabaseClient } from "./supabaseServer";
+import { getSupabaseClient } from "./supabaseServer.js";
 
 export async function getUserReadChapters(userId: string, token?: string): Promise<Record<number, number[]>> {
   try {

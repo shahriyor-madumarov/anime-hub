@@ -15,32 +15,32 @@ import {
   getUserByAuthToken,
   signOutWithSupabase,
   getUserStats,
-} from "./src/db/userService";
+} from "./src/db/userService.js";
 import {
   getUserWatchlist,
   saveWatchlistItem,
   deleteWatchlistItem,
   syncWatchlist
-} from "./src/db/watchlistService";
+} from "./src/db/watchlistService.js";
 import {
   getUserRecentlyViewed,
   addRecentlyViewed,
   clearRecentlyViewed,
   syncRecentlyViewed
-} from "./src/db/recentlyViewedService";
+} from "./src/db/recentlyViewedService.js";
 import {
   getUserReadChapters,
   saveReadChaptersForMedia,
   toggleReadChapter,
   markUpToChapter,
   syncReadChapters
-} from "./src/db/readChaptersService";
+} from "./src/db/readChaptersService.js";
 import {
   uploadAvatar,
   deleteAvatar,
   uploadBanner,
   deleteBanner
-} from "./src/db/storageService";
+} from "./src/db/storageService.js";
 import {
   validateRequest,
   registerSchema,
@@ -53,7 +53,7 @@ import {
   toggleReadChapterSchema,
   markUpToChapterSchema,
   userSyncSchema
-} from "./src/middleware/validate";
+} from "./src/middleware/validate.js";
 
 const app = express();
 const PORT = 3000;

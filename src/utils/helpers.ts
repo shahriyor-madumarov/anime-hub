@@ -1,5 +1,5 @@
-import { MediaFormat, MediaStatus, UserWatchStatus } from "../types";
-import { apiFetch, getAuthToken } from "./auth";
+import { MediaFormat, MediaStatus, UserWatchStatus } from "../types.js";
+import { apiFetch, getAuthToken } from "./auth.js";
 
 export const GENRE_MAP_RU: Record<string, string> = {
   Action: "Экшен",

@@ -1,5 +1,5 @@
-import { supabaseServer } from "./supabaseServer";
-import { updateUserProfile } from "./userService";
+import { supabaseServer } from "./supabaseServer.js";
+import { updateUserProfile } from "./userService.js";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB limit
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];

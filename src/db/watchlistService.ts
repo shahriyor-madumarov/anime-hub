@@ -1,4 +1,4 @@
-import { getSupabaseClient } from "./supabaseServer";
+import { getSupabaseClient } from "./supabaseServer.js";
 
 export interface WatchlistItemPayload {
   mediaId: number;

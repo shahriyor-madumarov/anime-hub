@@ -1,4 +1,4 @@
-import { supabaseServer } from "./supabaseServer";
+import { supabaseServer } from "./supabaseServer.js";
 
 export interface ServerUser {
   id: string;

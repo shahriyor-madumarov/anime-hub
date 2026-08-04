@@ -1,4 +1,4 @@
-import { getSupabaseClient } from "./supabaseServer";
+import { getSupabaseClient } from "./supabaseServer.js";
 
 function normalizeMediaType(typeStr?: string): "anime" | "manga" | "manhwa" {
   if (!typeStr) return "anime";
