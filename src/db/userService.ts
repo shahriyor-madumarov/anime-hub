@@ -106,6 +106,52 @@ export async function signUpWithSupabase(userData: {
 
   console.log("[REGISTER TRACE 5] Before calling supabase.auth.signUp()");
 
+  // Diagnostic logging
+  const urlVal = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "https://xrotiwzgtcwqjjpgzznh.supabase.co";
+  const anonKeyVal = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_HYLIoV70dTcXlYGgT0mvgg_2zI1-IS4";
+  const serviceKeyVal = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || "";
+
+  console.log("=== DIAGNOSTIC LOGS ===");
+  console.log("SUPABASE_URL:", urlVal);
+  console.log("SUPABASE_ANON_KEY length:", anonKeyVal.length);
+  console.log("SUPABASE_SERVICE_ROLE_KEY length:", serviceKeyVal.length);
+  console.log("typeof global.fetch:", typeof global.fetch);
+  console.log("Node.js version:", process.version);
+  console.log("process.env.VERCEL:", process.env.VERCEL);
+  console.log("process.env.NODE_ENV:", process.env.NODE_ENV);
+
+  try {
+    console.log("=== RAW FETCH DIAGNOSTIC START ===");
+    const rawRes = await global.fetch("https://xrotiwzgtcwqjjpgzznh.supabase.co/auth/v1/signup", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": anonKeyVal,
+      },
+      body: JSON.stringify({
+        email: cleanEmail,
+        password: userData.password,
+        data: {
+          username: cleanUsername,
+          date_of_birth: userData.dateOfBirth,
+        },
+      }),
+    });
+
+    const rawText = await rawRes.text();
+    const headersObj: Record<string, string> = {};
+    rawRes.headers.forEach((v, k) => {
+      headersObj[k] = v;
+    });
+
+    console.log("RAW FETCH Status:", rawRes.status);
+    console.log("RAW FETCH Headers:", JSON.stringify(headersObj, null, 2));
+    console.log("RAW FETCH Body:", rawText);
+    console.log("=== RAW FETCH DIAGNOSTIC END ===");
+  } catch (rawErr: any) {
+    console.error("RAW FETCH DIAGNOSTIC ERROR:", rawErr);
+  }
+
   let signUpRes: any;
   try {
     signUpRes = await supabaseAnonClient.auth.signUp({
