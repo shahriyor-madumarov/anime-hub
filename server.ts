@@ -120,14 +120,6 @@ const aiLimiter = rateLimit({
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// Path normalization middleware for serverless routing (Vercel)
-app.use((req, res, next) => {
-  if (!req.url.startsWith("/api") && req.url !== "/favicon.ico") {
-    req.url = "/api" + (req.url.startsWith("/") ? "" : "/") + req.url;
-  }
-  next();
-});
-
 // Initialize Gemini Client safely
 let ai: GoogleGenAI | null = null;
 function getGeminiClient() {
