@@ -27,12 +27,24 @@ const supabaseUrl = getValidUrl(rawUrl);
 const supabaseAnonKey = getValidKey(rawAnonKey, "sb_publishable_HYLIoV70dTcXlYGgT0mvgg_2zI1-IS4");
 const supabaseServiceKey = getValidKey(rawServiceKey, "");
 
-export const supabaseServer = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+// Client 1: Uses ANON key only - used for client auth flows (signUp, signInWithPassword, signOut)
+export const supabaseAnonClient = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: false,
     autoRefreshToken: false,
   },
 });
+
+// Client 2: Uses SERVICE ROLE key - used for database CRUD, upsert, inserts, admin operations
+export const supabaseAdminClient = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});
+
+// Alias for backward compatibility
+export const supabaseServer = supabaseAdminClient;
 
 export function getSupabaseClient(token?: string) {
   if (supabaseServiceKey) {

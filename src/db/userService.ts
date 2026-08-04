@@ -1,4 +1,4 @@
-import { supabaseServer } from "./supabaseServer.js";
+import { supabaseAnonClient, supabaseAdminClient } from "./supabaseServer.js";
 
 export interface ServerUser {
   id: string;
@@ -28,7 +28,7 @@ export function mapDbUserToUser(row: any): ServerUser {
 
 export async function findUserById(id: string): Promise<ServerUser | null> {
   try {
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabaseAdminClient
       .from("users")
       .select("*")
       .eq("id", id)
@@ -70,7 +70,7 @@ export async function ensureUserProfile(
 
   if (!user) {
     try {
-      const { data, error } = await supabaseServer
+      const { data, error } = await supabaseAdminClient
         .from("users")
         .upsert({
           ...insertPayload,
@@ -108,7 +108,7 @@ export async function signUpWithSupabase(userData: {
 
   let signUpRes: any;
   try {
-    signUpRes = await supabaseServer.auth.signUp({
+    signUpRes = await supabaseAnonClient.auth.signUp({
       email: cleanEmail,
       password: userData.password,
       options: {
@@ -134,38 +134,9 @@ export async function signUpWithSupabase(userData: {
   }
 
   if (signUpRes?.error) {
-    const sbErr = signUpRes.error;
-    let msg = "";
-    if (typeof sbErr === "string" && sbErr.trim() && sbErr.trim() !== "{}" && sbErr.trim() !== "[object Object]") {
-      msg = sbErr.trim();
-    } else if (sbErr && typeof sbErr === "object") {
-      if (typeof sbErr.message === "string" && sbErr.message.trim() && sbErr.message.trim() !== "{}" && sbErr.message.trim() !== "[object Object]") {
-        msg = sbErr.message.trim();
-      } else if (typeof sbErr.msg === "string" && sbErr.msg.trim() && sbErr.msg.trim() !== "{}" && sbErr.msg.trim() !== "[object Object]") {
-        msg = sbErr.msg.trim();
-      } else if (typeof sbErr.error_description === "string" && sbErr.error_description.trim()) {
-        msg = sbErr.error_description.trim();
-      }
-    }
-    if (!msg || msg === "{}" || msg === "[object Object]") {
-      msg = "Пользователь с такими данными уже существует или ошибка Supabase Auth";
-    }
-    const code = sbErr.code || sbErr.status || null;
-    const status = sbErr.status || 400;
-
-    console.error("[REGISTER TRACE 7] Supabase returned an error object:", {
-      message: msg,
-      code: code,
-      status: status,
-      fullError: sbErr,
-      stack: sbErr?.stack || new Error().stack,
-    });
-
-    const err: any = new Error(msg);
-    err.code = code;
-    err.status = status;
-    err.supabaseError = sbErr;
-    throw err;
+    console.error("RAW SUPABASE ERROR:", JSON.stringify(signUpRes.error, null, 2));
+    console.error("RAW ERROR OBJECT:", signUpRes.error);
+    throw signUpRes.error;
   }
 
   if (!signUpRes?.data?.user) {
@@ -241,7 +212,7 @@ export async function signInWithSupabase(loginData: {
 
   console.log(`[UserService] Attempting Supabase signInWithPassword for resolved email: "${email}"`);
 
-  const { data: authData, error: authError } = await supabaseServer.auth.signInWithPassword({
+  const { data: authData, error: authError } = await supabaseAnonClient.auth.signInWithPassword({
     email,
     password: loginData.password,
   });
@@ -278,7 +249,7 @@ export async function getUserByAuthToken(token: string): Promise<ServerUser | nu
   if (!token) return null;
 
   try {
-    const { data: { user: authUser }, error } = await supabaseServer.auth.getUser(token);
+    const { data: { user: authUser }, error } = await supabaseAdminClient.auth.getUser(token);
 
     if (!error && authUser) {
       let user = await findUserById(authUser.id);
@@ -305,7 +276,8 @@ export async function getUserByAuthToken(token: string): Promise<ServerUser | nu
 export async function signOutWithSupabase(token: string): Promise<void> {
   if (!token) return;
   try {
-    await supabaseServer.auth.admin?.signOut?.(token).catch(() => {});
+    await supabaseAnonClient.auth.signOut().catch(() => {});
+    await supabaseAdminClient.auth.admin?.signOut?.(token).catch(() => {});
   } catch (err) {
     console.error("[UserService] Exception in signOutWithSupabase:", err);
   }
@@ -314,7 +286,7 @@ export async function signOutWithSupabase(token: string): Promise<void> {
 export async function findUserByUsername(username: string): Promise<ServerUser | null> {
   const clean = username.trim().toLowerCase();
   try {
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabaseAdminClient
       .from("users")
       .select("*")
       .ilike("username", clean)
@@ -334,7 +306,7 @@ export async function findUserByUsername(username: string): Promise<ServerUser |
 export async function findUserByEmail(email: string): Promise<ServerUser | null> {
   const clean = email.trim().toLowerCase();
   try {
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabaseAdminClient
       .from("users")
       .select("*")
       .ilike("email", clean)
@@ -354,7 +326,7 @@ export async function findUserByEmail(email: string): Promise<ServerUser | null>
 export async function findUserByLogin(login: string): Promise<ServerUser | null> {
   const clean = login.trim().toLowerCase();
   try {
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabaseAdminClient
       .from("users")
       .select("*")
       .or(`username.ilike.${clean},email.ilike.${clean}`)
@@ -393,7 +365,7 @@ export async function updateUserProfile(
   dbUpdates.updated_at = new Date().toISOString();
 
   try {
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabaseAdminClient
       .from("users")
       .update(dbUpdates)
       .eq("id", userId)
@@ -431,10 +403,10 @@ export async function getUserStats(userId: string): Promise<{
 }> {
   try {
     const [favs, watch, comms, rats] = await Promise.all([
-      supabaseServer.from("favorites").select("*", { count: "exact", head: true }).eq("user_id", userId),
-      supabaseServer.from("watchlist_items").select("*", { count: "exact", head: true }).eq("user_id", userId),
-      supabaseServer.from("comments").select("*", { count: "exact", head: true }).eq("user_id", userId),
-      supabaseServer.from("ratings").select("*", { count: "exact", head: true }).eq("user_id", userId),
+      supabaseAdminClient.from("favorites").select("*", { count: "exact", head: true }).eq("user_id", userId),
+      supabaseAdminClient.from("watchlist_items").select("*", { count: "exact", head: true }).eq("user_id", userId),
+      supabaseAdminClient.from("comments").select("*", { count: "exact", head: true }).eq("user_id", userId),
+      supabaseAdminClient.from("ratings").select("*", { count: "exact", head: true }).eq("user_id", userId),
     ]);
 
     return {
