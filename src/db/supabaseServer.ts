@@ -27,6 +27,18 @@ const supabaseUrl = getValidUrl(rawUrl);
 const supabaseAnonKey = getValidKey(rawAnonKey, "sb_publishable_HYLIoV70dTcXlYGgT0mvgg_2zI1-IS4");
 const supabaseServiceKey = getValidKey(rawServiceKey, "");
 
+console.log("[RUNTIME VERIFICATION] SUPABASE_SERVICE_ROLE_KEY status:", {
+  exists: Boolean(supabaseServiceKey),
+  length: supabaseServiceKey.length,
+  first8: supabaseServiceKey ? supabaseServiceKey.substring(0, 8) : "",
+  last8: supabaseServiceKey ? supabaseServiceKey.slice(-8) : "",
+});
+
+console.log(
+  "[RUNTIME VERIFICATION] supabaseAdminClient creation:",
+  supabaseServiceKey ? "Service Role Key" : "Anon Key fallback"
+);
+
 // Client 1: Uses ANON key only - used for client auth flows (signUp, signInWithPassword, signOut)
 export const supabaseAnonClient = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {

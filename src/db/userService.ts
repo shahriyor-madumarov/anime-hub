@@ -51,10 +51,20 @@ export async function ensureUserProfile(
   username: string,
   dateOfBirth?: string
 ): Promise<ServerUser> {
-  let user = await findUserById(authUserId);
-  if (!user) {
-    user = await findUserByEmail(email);
+  const userById = await findUserById(authUserId);
+  let userByEmail = null;
+  if (!userById) {
+    userByEmail = await findUserByEmail(email);
   }
+
+  console.log("REGISTER STEP 4: Inside ensureUserProfile()", {
+    authUserId,
+    username,
+    findUserByIdFoundProfile: Boolean(userById),
+    findUserByEmailFoundProfile: Boolean(userByEmail),
+  });
+
+  const user = userById || userByEmail;
 
   const now = new Date().toISOString();
   const cleanUsername = username ? username.trim() : email.split("@")[0];
@@ -70,6 +80,7 @@ export async function ensureUserProfile(
 
   if (!user) {
     try {
+      console.log("REGISTER STEP 5: Before users.upsert()");
       const { data, error } = await supabaseAdminClient
         .from("users")
         .upsert({
@@ -80,9 +91,14 @@ export async function ensureUserProfile(
         .single();
 
       if (error) {
+        console.error("REGISTER STEP 6 (FAILURE): After users.upsert() - COMPLETE PostgREST error object:");
+        console.error(JSON.stringify(error, null, 2));
+        console.error("PostgREST Error Object:", error);
         console.error("[UserService] Error upserting user profile:", error.message);
         throw new Error(error.message);
       }
+
+      console.log("REGISTER STEP 6 (SUCCESS): After users.upsert()", data);
       return mapDbUserToUser(data);
     } catch (err: any) {
       console.error("[UserService] Exception in ensureUserProfile:", err);
@@ -154,6 +170,7 @@ export async function signUpWithSupabase(userData: {
 
   let signUpRes: any;
   try {
+    console.log("REGISTER STEP 1: Before auth.signUp()");
     signUpRes = await supabaseAnonClient.auth.signUp({
       email: cleanEmail,
       password: userData.password,
@@ -164,6 +181,16 @@ export async function signUpWithSupabase(userData: {
         },
       },
     });
+
+    const resUser = signUpRes?.data?.user;
+    const resSession = signUpRes?.data?.session;
+
+    console.log("REGISTER STEP 2: After auth.signUp()", {
+      "user.id": resUser?.id || null,
+      "session exists?": Boolean(resSession),
+      "email confirmed?": Boolean(resUser?.confirmed_at || resUser?.email_confirmed_at),
+    });
+
     console.log("[REGISTER TRACE 6] Complete response from supabase.auth.signUp():", {
       data: signUpRes?.data,
       error: signUpRes?.error,
@@ -218,6 +245,8 @@ export async function signUpWithSupabase(userData: {
   }
 
   const token = session.access_token;
+
+  console.log("REGISTER STEP 3: Before ensureUserProfile()");
 
   let user: ServerUser;
   try {
