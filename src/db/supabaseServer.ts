@@ -33,6 +33,43 @@ export const supabaseAnonClient = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: false,
     autoRefreshToken: false,
   },
+  global: {
+    fetch: async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : (input && typeof input === "object" && "url" in input) ? (input as any).url : String(input);
+      const method = init?.method || "GET";
+      const headers = init?.headers || {};
+
+      let hasApiKey = false;
+      let hasAuth = false;
+      if (typeof Headers !== "undefined" && headers instanceof Headers) {
+        hasApiKey = headers.has("apikey");
+        hasAuth = headers.has("authorization") || headers.has("Authorization");
+      } else if (Array.isArray(headers)) {
+        hasApiKey = headers.some(([k]) => String(k).toLowerCase() === "apikey");
+        hasAuth = headers.some(([k]) => String(k).toLowerCase() === "authorization");
+      } else if (headers && typeof headers === "object") {
+        hasApiKey = Object.keys(headers).some((k) => k.toLowerCase() === "apikey");
+        hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
+      }
+
+      console.log("[CUSTOM FETCH START]", { url, method, hasApiKey, hasAuth });
+
+      try {
+        const response = await globalThis.fetch(input, init);
+        console.log("[CUSTOM FETCH SUCCESS]", { url, status: response.status });
+        return response;
+      } catch (err: any) {
+        console.error("[CUSTOM FETCH ERROR]", {
+          url,
+          name: err?.name,
+          message: err?.message,
+          cause: err?.cause,
+          stack: err?.stack,
+        });
+        throw err;
+      }
+    },
+  },
 });
 
 // Client 2: Uses SERVICE ROLE key - used for database CRUD, upsert, inserts, admin operations
